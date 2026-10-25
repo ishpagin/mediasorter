@@ -487,100 +487,112 @@ function setupEvents(root) {
 """
 
 _CSS = r"""
-.ps-root { outline: none; }
+/* Light table: photos sit in slide mounts on a lit surface; grease pencil yellow marks selects, red marks rejects */
+.ps-root {
+    outline: none; font-family: inherit;
+    --lt-surface: #E6EAEE; --lt-mount: #FBFBF8; --lt-edge: #CDD3DA; --lt-ink: #1D2024; --lt-soft: #5E656E;
+    --lt-frame: #24272B; --lt-pick: #F2B705; --lt-reject: #C2361F;
+    --lt-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
 .ps-bar {
     position: sticky; top: var(--ps-top, 0px); z-index: 5; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-    padding: 8px 0; background: var(--st-background-color, #fff);
-    font-size: 14px; color: var(--st-text-color, #31333f);
-    box-shadow: 0 6px 8px -8px rgba(0, 0, 0, .35);
+    padding: 12px 0; background: var(--lt-surface); font-size: 14px; color: var(--lt-ink);
 }
-.ps-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.ps-hint { font-size: 12px; opacity: .6; }
+.ps-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ps-hint { font-size: 12px; color: var(--lt-soft); }
 .ps-btn {
-    font: inherit; font-size: 14px; padding: 4px 12px; border-radius: 8px; cursor: pointer;
-    border: 1px solid var(--st-border-color, rgba(49, 51, 63, .2));
-    background: var(--st-secondary-background-color, #f0f2f6); color: inherit;
+    font: inherit; font-size: 14px; font-weight: 500; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--lt-edge); background: var(--lt-mount); color: var(--lt-ink);
+    transition: background-color 150ms var(--lt-ease), border-color 150ms var(--lt-ease);
 }
-.ps-btn.danger { background: var(--st-primary-color, #ff4b4b); border-color: transparent; color: #fff; }
-.ps-btn:disabled { opacity: .4; cursor: default; }
+.ps-btn:hover:not(:disabled) { border-color: var(--lt-ink); }
+.ps-btn:active:not(:disabled) { transform: translateY(1px); }
+.ps-btn.danger { background: #FBEDEA; border-color: var(--lt-reject); color: var(--lt-reject); }
+.ps-btn.danger:hover:not(:disabled) { background: var(--lt-reject); color: #FFFFFF; }
+.ps-btn:disabled { opacity: .45; cursor: default; }
+.ps-btn:focus-visible, .ps-tile:focus-visible, .ps-vbtn:focus-visible, .ps-vnav:focus-visible {
+    outline: 2px solid var(--lt-ink); outline-offset: 2px;
+}
 .ps-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 16px 12px;
     user-select: none; min-height: 40px;
 }
 .ps-head {
-    grid-column: 1 / -1; margin-top: 10px; padding: 4px 2px; font-size: 14px; font-weight: 600;
-    border-bottom: 1px solid var(--st-border-color, rgba(128, 128, 128, .3));
+    grid-column: 1 / -1; margin-top: 16px; padding: 0 2px; font-size: 15px; font-weight: 600; color: var(--lt-ink);
 }
+/* a slide mount: off-white frame, small radius, a crisp cool shadow like a mount lying on the glass */
 .ps-tile {
-    border: 2px solid transparent; border-radius: 10px; padding: 4px; cursor: pointer;
-    background: var(--st-secondary-background-color, #f0f2f6);
+    position: relative; padding: 6px; border-radius: 4px; cursor: pointer; background: var(--lt-mount);
+    box-shadow: 0 0 0 1px rgba(29, 32, 36, .07), 0 1px 2px rgba(36, 48, 66, .10), 0 6px 14px -8px rgba(36, 48, 66, .28);
+    transition: box-shadow 200ms var(--lt-ease), transform 200ms var(--lt-ease);
 }
-.ps-tile:hover { border-color: rgba(128, 128, 128, .4); }
-.ps-tile.sel {
-    border-color: var(--st-primary-color, #ff4b4b);
-    background: color-mix(in srgb, var(--st-primary-color, #ff4b4b) 14%, transparent);
+.ps-tile:hover {
+    box-shadow: 0 0 0 1px rgba(29, 32, 36, .12), 0 2px 4px rgba(36, 48, 66, .12), 0 14px 24px -12px rgba(36, 48, 66, .38);
 }
-.ps-img { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 7px; background: #0002; }
+/* grease pencil: a thick yellow ring around what you picked */
+.ps-tile::after {
+    content: ""; position: absolute; inset: -5px; border-radius: 8px; pointer-events: none;
+    border: 3px solid var(--lt-pick); opacity: 0; transform: scale(1.03);
+    transition: opacity 160ms var(--lt-ease), transform 160ms var(--lt-ease);
+}
+.ps-tile.sel::after { opacity: 1; transform: none; }
+.ps-img { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 2px; background: #DCE1E7; }
 .ps-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ps-del {
-    position: absolute; top: 4px; right: 4px; display: none; border: none; border-radius: 6px;
-    background: rgba(0, 0, 0, .6); color: #fff; font-size: 15px; padding: 2px 6px; cursor: pointer;
+.ps-del, .ps-open {
+    position: absolute; right: 4px; display: none; border: none; border-radius: 4px; cursor: pointer;
+    background: rgba(29, 32, 36, .72); color: #FFFFFF; font-size: 14px; padding: 2px 8px;
 }
-.ps-del:hover { background: var(--st-primary-color, #ff4b4b); }
-.ps-tile:hover .ps-del { display: block; }
-.ps-open {
-    position: absolute; bottom: 4px; right: 4px; display: none; border: none; border-radius: 6px;
-    background: rgba(0, 0, 0, .6); color: #fff; font-size: 15px; padding: 2px 7px; cursor: pointer;
+.ps-del { top: 4px; }
+.ps-open { bottom: 4px; }
+.ps-del:hover { background: var(--lt-reject); }
+.ps-open:hover { background: var(--lt-frame); }
+.ps-tile:hover .ps-del, .ps-tile:hover .ps-open { display: block; }
+.ps-check {
+    position: absolute; top: 4px; left: 4px; display: none; width: 24px; height: 24px; border-radius: 50%;
+    background: var(--lt-pick); color: var(--lt-ink); font-size: 14px; font-weight: 700; line-height: 24px; text-align: center;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
 }
-.ps-open:hover { background: rgba(0, 0, 0, .85); }
-.ps-tile:hover .ps-open { display: block; }
+.ps-tile.sel .ps-check { display: block; }
+/* fixed caption height -> every mount has exactly the same size; full text is in the tooltip */
+.ps-cap {
+    font-size: 12px; line-height: 16px; white-space: pre-line; overflow-wrap: anywhere; padding: 6px 2px 0;
+    color: var(--lt-soft); height: calc(4 * 16px + 6px); overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+}
 
-/* full-screen viewer */
+/* full-screen viewer: the photo alone on black, controls on a graphite strip */
 .ps-view {
-    position: fixed; inset: 0; z-index: 2147483000; background: rgba(0, 0, 0, .94);
+    position: fixed; inset: 0; z-index: 2147483000; background: #000000;
     display: flex; align-items: center; justify-content: center;
 }
 .ps-view[hidden], .ps-vimg[hidden], .ps-vvid[hidden] { display: none; }
 .ps-vimg, .ps-vvid { width: 100vw; height: 100vh; object-fit: contain; }  /* fit the screen, small ones too */
 .ps-vtop {
-    position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; gap: 12px;
-    align-items: center; padding: 10px 14px; color: #fff; font-size: 14px;
-    background: linear-gradient(rgba(0, 0, 0, .7), transparent);
+    position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 12px; align-items: center;
+    padding: 8px 16px; color: #E6E8EB; font-size: 14px; background: rgba(36, 39, 43, .88);
 }
-.ps-vcap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
+.ps-vcap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ps-vbtns, .ps-vacts { display: flex; gap: 8px; flex-shrink: 0; }
-.ps-vhint { font-size: 12px; opacity: .6; white-space: nowrap; margin-left: auto; }
+.ps-vhint { font-size: 12px; color: #9AA1A9; white-space: nowrap; margin-left: auto; }
 .ps-vbtn {
-    border: none; border-radius: 8px; padding: 6px 12px; font-size: 15px; cursor: pointer;
-    background: rgba(255, 255, 255, .16); color: #fff;
+    border: 1px solid #3E4248; border-radius: 6px; padding: 6px 12px; font: inherit; font-size: 14px; font-weight: 500;
+    cursor: pointer; background: #33373C; color: #FFFFFF; transition: background-color 150ms var(--lt-ease);
 }
-.ps-vbtn:hover { background: rgba(255, 255, 255, .3); }
-.ps-vbtn.danger:hover { background: var(--st-primary-color, #ff4b4b); }
+.ps-vbtn:hover { background: #41464C; }
+.ps-vbtn.danger:hover { background: var(--lt-reject); border-color: var(--lt-reject); }
 .ps-vnav {
-    position: absolute; top: 50%; transform: translateY(-50%); width: 56px; height: 96px; border: none;
-    border-radius: 10px; font-size: 48px; line-height: 1; color: #fff; background: rgba(0, 0, 0, .3); cursor: pointer;
+    position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 96px; border: none;
+    border-radius: 6px; font-size: 40px; line-height: 1; color: #FFFFFF; background: rgba(36, 39, 43, .55); cursor: pointer;
 }
-.ps-vnav:hover { background: rgba(0, 0, 0, .6); }
-.ps-vprev { left: 12px; }
-.ps-vnext { right: 12px; }
-.ps-check {
-    position: absolute; top: 4px; left: 4px; display: none; width: 22px; height: 22px; border-radius: 50%;
-    background: var(--st-primary-color, #ff4b4b); color: #fff; font-size: 14px; line-height: 22px; text-align: center;
-}
-.ps-tile.sel .ps-check { display: block; }
-/* fixed caption height -> every card has exactly the same size; full text is in the tooltip */
-.ps-cap {
-    font-size: 12px; line-height: 1.35; white-space: pre-line; overflow-wrap: anywhere; padding: 4px 2px 0;
-    color: var(--st-text-color, #31333f); opacity: .85;
-    height: calc(4 * 1.35em); overflow: hidden;
-    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
-}
+.ps-vnav:hover { background: rgba(36, 39, 43, .9); }
+.ps-vprev { left: 16px; }
+.ps-vnext { right: 16px; }
 .ps-sentinel { height: 1px; }
 .ps-band {
-    position: fixed; display: none; pointer-events: none; z-index: 1000;
-    border: 1px solid var(--st-primary-color, #ff4b4b);
-    background: color-mix(in srgb, var(--st-primary-color, #ff4b4b) 15%, transparent);
+    position: fixed; display: none; pointer-events: none; z-index: 1000; border-radius: 2px;
+    border: 2px solid var(--lt-pick); background: rgba(242, 183, 5, .14);
 }
+@media (prefers-reduced-motion: reduce) { .ps-root *, .ps-root *::after { transition: none !important; } }
 """
 
 _grid = st.components.v2.component("photo_grid", js=_JS, css=_CSS)

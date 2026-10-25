@@ -22,6 +22,20 @@ _ap.add_argument("--db", default=ps.DEFAULT_DB)
 DB = _ap.parse_known_args(sys.argv[1:])[0].db
 
 st.set_page_config(page_title="Mediasorter", layout="wide")
+
+st.html("""<style>
+/* light table: tighter headings; the sidebar is the graphite frame of the table */
+h1 { letter-spacing: -0.02em; }
+h2, h3 { letter-spacing: -0.01em; }
+h1, h2, h3 { text-wrap: balance; }
+[data-testid="stSidebar"] [data-testid="stSidebarNav"] a[aria-current="page"] { box-shadow: inset 3px 0 0 #F2B705; }
+/* cards (people, collections, similar pairs) are slide mounts too, like the photos in the grid */
+[class*="st-key-mount_"] {
+    background: #FBFBF8; border-color: transparent !important; border-radius: 4px !important;
+    box-shadow: 0 0 0 1px rgba(29, 32, 36, .07), 0 1px 2px rgba(36, 48, 66, .10), 0 6px 14px -8px rgba(36, 48, 66, .28);
+}
+[class*="st-key-mount_"] img { border-radius: 2px; }
+</style>""")
 con = stacks.open_db(DB)
 state = st.session_state
 
@@ -280,7 +294,7 @@ def who_dialog(file_ids, src=None):
         key = f"who_{nonce}_{i}"
         if key not in state:
             state[key] = u["person_id"] if u["person_id"] is not None else NOBODY
-        with cols[i % 5], st.container(border=True):
+        with cols[i % 5], st.container(border=True, key=f"mount_who_{nonce}_{i}"):
             if u["thumb"]:
                 st.image(square(u["thumb"], 128), width="stretch")
             st.caption(os.path.basename(u["path"]))
@@ -618,7 +632,7 @@ def people_page():
 
     cols = st.columns(6)
     for i, (pid, name, nf, thumb, years) in enumerate(rows):
-        with cols[i % 6], st.container(border=True):
+        with cols[i % 6], st.container(border=True, key=f"mount_p_{pid}"):
             if thumb:
                 st.image(square(thumb), width="stretch")
             if state.get(f"nm_{pid}") != (name or ""):
@@ -1124,7 +1138,7 @@ def similar_page():
     for sim, p1, p2 in pairs[:shown(key)]:
         if info[p1][1] < info[p2][1]:  # bigger cluster first: it keeps its id on merge
             p1, p2 = p2, p1
-        with st.container(border=True):
+        with st.container(border=True, key=f"mount_sim_{p1}_{p2}"):
             cols = st.columns([4, 1, 4], vertical_alignment="center")
             for col, pid in ((cols[0], p1), (cols[2], p2)):
                 name, nf, _ = info[pid]
@@ -1195,7 +1209,7 @@ def collections_page():
     if state.coll_open not in [c[0] for c in colls]:
         state.coll_open = colls[0][0]
     for cid, name, folder, n, mb, n_video in colls:
-        with st.container(border=True):
+        with st.container(border=True, key=f"mount_c_{cid}"):
             z = ps.collection_zip_path(con, cid)
             zinfo = f" · 📦 ZIP {os.path.getsize(z) / 1e6:.0f} МБ" if os.path.exists(z) else ""
             cols = st.columns([4, 1, 1, 1, 1.4], vertical_alignment="center")
