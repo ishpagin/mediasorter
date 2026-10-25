@@ -1,6 +1,9 @@
 <div align="center">
 
-# 🗂️ Mediasorter
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo-readme-dark.svg">
+  <img src="docs/logo-readme-light.svg" alt="Mediasorter" width="420">
+</picture>
 
 **Наведи порядок в домашнем архиве фото и видео — без облака и без ручной сортировки.**
 

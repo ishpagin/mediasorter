@@ -21,7 +21,9 @@ _ap = argparse.ArgumentParser()
 _ap.add_argument("--db", default=ps.DEFAULT_DB)
 DB = _ap.parse_known_args(sys.argv[1:])[0].db
 
-st.set_page_config(page_title="Mediasorter", layout="wide")
+STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+st.set_page_config(page_title="Mediasorter", page_icon=os.path.join(STATIC, "mark.svg"), layout="wide")
+st.logo(os.path.join(STATIC, "logo.svg"), icon_image=os.path.join(STATIC, "mark.svg"), size="large")
 
 st.html("""<style>
 /* light table: tighter headings; the sidebar is the graphite frame of the table */
@@ -1285,8 +1287,21 @@ PAGES = {
 nav = st.navigation(list(PAGES.values()))
 if state.get("_page") != nav.url_path:  # another screen: flip the animation name so the browser replays it
     state._page, state._enter = nav.url_path, 1 - state.get("_enter", 0)
-st.html(f'<style>[data-testid="stMainBlockContainer"] {{ animation: lt-enter-{state.get("_enter", 0)} '
-        f'320ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }}</style>')  # backwards: no transform left after it ends, or position:fixed (the viewer) would be trapped inside
+if not state.get("_splashed"):
+    # once per visit: the contact sheet lays out, the best shot gets circled, then the table shows through.
+    # Clicks pass through it; no screen animation this run, its transform would trap the fixed overlay.
+    state._splashed = True
+    # st.html strips inline <svg>; as an <img> its own CSS animation still plays
+    st.html('<div class="lt-splash"><img src="/app/static/logo-splash.svg" alt="Mediasorter"></div>' + """<style>
+.lt-splash { position: fixed; inset: 0; z-index: 1000001; display: grid; place-items: center; pointer-events: none;
+             background: #24272B; animation: lt-splash-out 420ms ease-in 1550ms forwards; }
+.lt-splash img { width: min(480px, 80vw); height: auto; }
+@keyframes lt-splash-out { to { opacity: 0; visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .lt-splash { display: none; } }
+</style>""")
+else:
+    st.html(f'<style>[data-testid="stMainBlockContainer"] {{ animation: lt-enter-{state.get("_enter", 0)} '
+            f'320ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }}</style>')  # backwards: no transform left after it ends, or position:fixed (the viewer) would be trapped inside
 IN_COLLECTION = in_collection()
 PEOPLE_IN = people_in()
 
