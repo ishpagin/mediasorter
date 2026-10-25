@@ -7,10 +7,8 @@ services:
     user: "${PUID:-0}:${PGID:-0}"  # start.sh sets your user on Linux/macOS, so data/ is yours, not root's
     environment:
       SCAN_EVERY_HOURS: ${SCAN_EVERY_HOURS:-24}
-      PS_MEDIA_URL: http://localhost:${MEDIA_PORT:-8502}  # the address the browser opens originals at
     ports:  # this computer only (photos are private): see README to open it to the home network
       - "127.0.0.1:${PORT:-8501}:8501"
-      - "127.0.0.1:${MEDIA_PORT:-8502}:8502"
     volumes:
       - ${PHOTOS:-./photos}:/photos                               # your photos and videos
       - ./data:/data                                              # database; deleted files: data/_photosorter_deleted

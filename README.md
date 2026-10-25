@@ -39,7 +39,7 @@
 
 [InsightFace](https://github.com/deepinsight/insightface) (SCRFD + ArcFace) для лиц, кластеризация Chinese Whispers,
 [SigLIP 2](https://huggingface.co/immich-app/ViT-B-16-SigLIP2__webli) для сюжетов и поиска, ONNX Runtime (CUDA или CPU),
-SQLite, интерфейс на Streamlit. Подробно — в [docs/DETAILS.md](docs/DETAILS.md).
+SQLite. Интерфейс — Vue 3 + [shadcn-vue](https://www.shadcn-vue.com/), сервер на Go (один бинарник). Подробно — в [docs/DETAILS.md](docs/DETAILS.md).
 
 ## Установка за 3 шага
 
@@ -118,8 +118,8 @@ SQLite, интерфейс на Streamlit. Подробно — в [docs/DETAILS
 - **Обновить:** скачай новый ZIP, перенеси в него свои `.env`, `data/` и `collections/`, запусти `start.bat` (`start.command`, `./start.sh`).
 - **Что сейчас делает:** `docker compose logs -f` (или вкладка Logs в Docker Desktop).
 - **Открыть с телефона / другого компьютера дома:** в `docker-compose.yml` замени `127.0.0.1:` на адрес этого
-  компьютера в домашней сети, а в `PS_MEDIA_URL` — `localhost` на тот же адрес. Входа по паролю нет: **никогда не
-  открывай эти порты в интернет** (проброс на роутере). Снаружи — только через VPN.
+  компьютера в домашней сети. Входа по паролю нет: **никогда не открывай этот порт в интернет** (проброс на роутере).
+  Снаружи — только через VPN.
 - **Порт 8501 занят:** поменяй `PORT=` в `.env`.
 - **Не та папка:** `change-folder.bat` / `change-folder.command` / `./start.sh --change`. Чтобы начать
   с чистого листа, перед этим удали папку `data/`.
@@ -128,5 +128,6 @@ SQLite, интерфейс на Streamlit. Подробно — в [docs/DETAILS
 
 Как всё устроено (сканирование, кластеризация, база, CLI, запуск без Docker): [docs/DETAILS.md](docs/DETAILS.md).
 Модели без Docker: `python tools/download_models.py`.
+Веб-интерфейс (Go + Vue) — в [web/](web/): сборка `web/build.sh`, фронтенд отдельно — `web/frontend/README.md`.
 
 Модели: InsightFace buffalo_l (лица; веса — только некоммерческое использование) и SigLIP2 (сюжеты и поиск).

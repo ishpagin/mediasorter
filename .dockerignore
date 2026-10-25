@@ -8,3 +8,6 @@ models
 __pycache__
 *.db
 *.log
+web/frontend/node_modules
+web/frontend/dist
+web/mediasorter-web

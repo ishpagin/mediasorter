@@ -1086,9 +1086,10 @@ def merge_persons(con, ids):
 
 def create_person(con, name):
     """A named person (an existing one with this name, case-insensitive, is reused)."""
-    row = con.execute("SELECT id FROM persons WHERE lower(name) = lower(?)", (name,)).fetchone()
-    if row:
-        return row[0]
+    # SQLite's lower() knows only ASCII: compare in Python so "Вася" and "вася" are one person
+    for pid, n in con.execute("SELECT id, name FROM persons WHERE name IS NOT NULL"):
+        if n.strip().lower() == name.strip().lower():
+            return pid
     pid = con.execute("INSERT INTO persons (name) VALUES (?)", (name,)).lastrowid
     con.commit()
     return pid
@@ -1195,8 +1196,19 @@ def _snapshot(con, fid):
     return pickle.dumps(snap)
 
 
+def _load_snapshot(blob):
+    """Snapshot of a deleted file: pickle (this module) or JSON (the Go web UI: {"v": 1, "tables": {table:
+    {"cols": [...], "rows": [[...]]}}}, BLOB values as {"b64": "..."})."""
+    if not blob.startswith(b"{"):
+        return pickle.loads(blob)
+    import json
+    dec = lambda v: base64.b64decode(v["b64"]) if isinstance(v, dict) else v
+    return {t: (d["cols"], [tuple(dec(v) for v in r) for r in d["rows"]])
+            for t, d in json.loads(blob)["tables"].items()}
+
+
 def _restore_snapshot(con, blob):
-    snap = pickle.loads(blob)
+    snap = _load_snapshot(blob)
     for table in ("persons",) + tuple(t for t, _ in _SNAP_TABLES):
         if table in snap:
             cols, rows = snap[table]

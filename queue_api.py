@@ -10,6 +10,11 @@ All requests: POST JSON, header "Authorization: Bearer <token>" (PS_QUEUE_TOKEN 
     /heartbeat {lease}                    -> {n}  (files still held; 0 = lease lost)
     /result    {lease, path, meta, faces, previews, error}
     /release   {lease}                    -> unfinished files go back to the queue at once
+For the web UI (mediasorter-web), the ML and the long jobs it does not run itself:
+    /embed_text {text}                    -> {vector: [768 floats]}   SigLIP2 text vector for search
+    /convert    {path}                    -> {jpeg: base64}           HEIC / RAW / TIFF for the viewer
+    /job        {name?}                   -> {name, running, progress, message, error}  name starts one of
+                                             cluster | stacks_build | stacks_score (one at a time); none = status
 With an empty queue a /lease may start /app/nightly.sh (at most every PS_QUEUE_AUTOSCAN_MIN minutes, 0 = never).
 """
 import argparse
@@ -28,6 +33,7 @@ from pathlib import Path
 
 import photosorter as ps
 import scenes
+import stacks
 
 MAX_BODY = 64 << 20
 AUTOSCAN_MIN = float(os.environ.get("PS_QUEUE_AUTOSCAN_MIN", "120"))
@@ -203,10 +209,97 @@ class Queue:
         return {"ok": True}
 
 
+class WebUI:
+    """Calls of the Go web UI: the text model, image conversion, long jobs."""
+    MAX_CONVERTED = 3000  # px, long side, as in media_server
+
+    def __init__(self, db):
+        self.db = db
+        self.lock = threading.Lock()
+        self.clip = None
+        self.job = {"name": None, "running": False, "progress": 0.0, "message": "", "error": ""}
+
+    def embed_text(self, req):
+        text = req.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise Bad(400, "text?")
+        with self.lock:  # the model loads once (a few seconds), then stays
+            if self.clip is None:
+                self.clip = scenes.Clip(image=False)
+            vec = self.clip.text([text.strip()])[0]
+        return {"vector": [round(float(v), 6) for v in vec]}
+
+    def convert(self, req):
+        path = req.get("path")
+        con = ps.open_db(self.db)
+        try:  # only files the DB knows
+            if not isinstance(path, str) or not con.execute("SELECT 1 FROM files WHERE path = ?", (path,)).fetchone():
+                raise Bad(404, "unknown file")
+        finally:
+            con.close()
+        import cv2
+        img = ps.load_image(Path(path))
+        if img is None:
+            raise Bad(422, "cannot decode")
+        s = self.MAX_CONVERTED / max(img.shape[:2])
+        if s < 1:
+            img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+        return {"jpeg": base64.b64encode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tobytes()).decode()}
+
+    def run_job(self, req):
+        name = req.get("name")
+        if name is None:
+            return dict(self.job)
+        jobs = {"cluster": self._cluster, "stacks_build": self._stacks_build, "stacks_score": self._stacks_score}
+        if name not in jobs:
+            raise Bad(400, "unknown job")
+        if self.job["running"]:
+            raise Bad(409, f"already running: {self.job['name']}")
+        self.job = {"name": name, "running": True, "progress": 0.0, "message": "", "error": ""}
+
+        def work():
+            try:
+                self.job["message"] = jobs[name]() or ""
+            except Exception as e:
+                self.job["error"] = repr(e)
+                print(f"{time.strftime('%F %T')} job {name}: {e!r}", flush=True)
+            finally:
+                self.job["running"] = False
+                self.job["progress"] = 1.0
+
+        threading.Thread(target=work, daemon=True).start()
+        return dict(self.job)
+
+    def _progress(self, f):
+        self.job["progress"] = max(0.0, min(1.0, float(f)))
+
+    def _cluster(self):
+        ps.cmd_cluster(ps.build_parser().parse_args(["--db", self.db, "cluster"]))
+        return "Кластеры пересчитаны"
+
+    def _stacks_build(self):
+        con = stacks.open_db(self.db)
+        try:
+            k, n = stacks.build(con, progress=self._progress)
+        finally:
+            con.close()
+        return f"Стопок: {k}, фото в них: {n}"
+
+    def _stacks_score(self):
+        con = stacks.open_db(self.db)
+        try:
+            stacks.score(con, workers=12, progress=self._progress)
+        finally:
+            con.close()
+        return "Качество оценено"
+
+
 def serve(db, bind):
     q = Queue(db)
+    web = WebUI(db)
     token = load_token(db)
-    routes = {"/lease": q.lease, "/heartbeat": q.heartbeat, "/result": q.result, "/release": q.release}
+    routes = {"/lease": q.lease, "/heartbeat": q.heartbeat, "/result": q.result, "/release": q.release,
+              "/embed_text": web.embed_text, "/convert": web.convert, "/job": web.run_job}
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args):
