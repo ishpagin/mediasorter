@@ -366,11 +366,12 @@ function setupEvents(root) {
         const id = idOf(tile);
         if (e.target.closest('.ps-del')) { fire(root, 'delete', [id]); return; }
         if (e.target.closest('.ps-open')) { openView(root, id); return; }
-        if (e.shiftKey && s.anchor !== null) {
-            const a = s.order.indexOf(s.anchor), b = s.order.indexOf(id);
-            if (!(e.ctrlKey || e.metaKey)) s.sel.clear();
+        const a = e.shiftKey && s.anchor !== null ? s.order.indexOf(s.anchor) : -1;
+        if (a >= 0) {  // shift: add the range from the last picked tile, keep what is selected already
+            const b = s.order.indexOf(id);
             for (let i = Math.min(a, b); i <= Math.max(a, b); i++) s.sel.add(s.order[i]);
-        } else if (e.ctrlKey || e.metaKey) {
+            s.anchor = id;
+        } else if (e.shiftKey || e.ctrlKey || e.metaKey) {  // shift without a usable anchor: just this one, never from the start
             s.sel.has(id) ? s.sel.delete(id) : s.sel.add(id);
             s.anchor = id;
         } else {
@@ -421,10 +422,16 @@ function setupEvents(root) {
             Object.assign(band.style, { display: 'block', left: l + 'px', top: t + 'px',
                                         width: (r - l) + 'px', height: (b - t) + 'px' });
             s.sel = new Set(base);
+            let last = -1;  // the band's end tile (in the drag direction) becomes the anchor for Shift+click
             for (const [id, el] of s.tiles) {
                 const q = el.getBoundingClientRect();
-                if (q.right > l && q.left < r && q.bottom > t && q.top < b) s.sel.add(id);
+                if (q.right > l && q.left < r && q.bottom > t && q.top < b) {
+                    s.sel.add(id);
+                    const i = s.order.indexOf(id);
+                    if (last < 0 || (my >= y0 ? i > last : i < last)) last = i;
+                }
             }
+            if (last >= 0) s.anchor = s.order[last];
             paint(root);
         };
         // auto-scroll while the pointer is near the top/bottom edge of the window
