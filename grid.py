@@ -172,6 +172,39 @@ function fileUrl(root, id) {
     return `${d.media}/file?id=${id}&t=${d.token}`;
 }
 
+// thumbnails of the opened photo's group (a stack / copies), from the previews the grid already has
+function viewStrip(root, v, it, id) {
+    const s = root._s;
+    let strip = v.querySelector('.ps-vstrip');
+    if (!strip) {
+        strip = document.createElement('div');
+        strip.className = 'ps-vstrip';
+        strip.addEventListener('click', (e) => {
+            const t = e.target.closest('.ps-vthumb');
+            if (t) openView(root, Number(t.dataset.id));
+        });
+        v.appendChild(strip);
+    }
+    const ids = it.group == null ? [] : s.order.filter((x) => s.items.get(x)?.group === it.group);
+    const show = ids.length > 1;
+    strip.hidden = !show;
+    v.classList.toggle('strip', show);
+    if (!show) { strip.dataset.ids = ''; return; }
+    const key = ids.join(',');
+    if (strip.dataset.ids !== key) {  // another group (or it changed): rebuild
+        strip.dataset.ids = key;
+        strip.innerHTML = ids.map((x) => {
+            const n = s.items.get(x);
+            const src = (window.__psImg && window.__psImg.get(n.img)) || '';
+            return `<button class="ps-vthumb" data-id="${x}" title="${esc(plain(n.cap.split('\n')[0]))}">`
+                 + (src ? `<img src="${src}" alt="">` : '') + '</button>';
+        }).join('');
+    }
+    for (const b of strip.children) b.classList.toggle('cur', Number(b.dataset.id) === id);
+    const cur = strip.querySelector('.cur');
+    if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
 function openView(root, id) {
     const s = root._s;
     const it = s.items.get(id);
@@ -201,6 +234,7 @@ function openView(root, id) {
     };
     const i = s.order.indexOf(id);
     v.querySelector('.ps-vcap').innerHTML = rich(`${i + 1} / ${root._api.data.total} · ` + it.cap.replace(/\n/g, ' · '));
+    viewStrip(root, v, it, id);
     for (const k of [1, -1]) {  // preload neighbours
         const n = s.items.get(s.order[i + k]);
         if (n && n.kind !== 'video') new Image().src = fileUrl(root, n.id);
@@ -608,6 +642,22 @@ _CSS = r"""
 .ps-vprev { left: 16px; }
 .ps-vnext { right: 16px; }
 .ps-sentinel { height: 1px; }
+/* viewer strip: the other shots of the same stack; the image makes room for it */
+.ps-view.strip .ps-vimg, .ps-view.strip .ps-vvid { height: calc(100vh - 96px); align-self: flex-start; }
+.ps-vstrip {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 96px; box-sizing: border-box; padding: 12px 16px;
+    display: flex; gap: 8px; justify-content: safe center; overflow-x: auto; scrollbar-width: thin;
+    background: rgba(36, 39, 43, .92);
+}
+.ps-vstrip[hidden] { display: none; }
+.ps-vthumb {
+    flex: 0 0 auto; width: 72px; height: 72px; padding: 0; border: none; border-radius: 4px; overflow: hidden;
+    cursor: pointer; background: #33373C; opacity: .55; outline: 3px solid transparent; outline-offset: 2px;
+    transition: opacity 150ms var(--lt-ease), outline-color 150ms var(--lt-ease);
+}
+.ps-vthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ps-vthumb:hover { opacity: .9; }
+.ps-vthumb.cur { opacity: 1; outline-color: var(--lt-pick); }
 .ps-band {
     position: fixed; display: none; pointer-events: none; z-index: 1000; border-radius: 2px;
     border: 2px solid var(--lt-pick); background: rgba(242, 183, 5, .14);
@@ -655,6 +705,8 @@ def photo_grid(list_id, items, total, has_more, actions, on_more, media=None):
              "title": it.get("title", "")}
         if it.get("head"):
             d["head"] = it["head"]
+        if it.get("group") is not None:  # stack / copy group: the viewer shows its strip
+            d["group"] = it["group"]
         if it["img"] not in sent:
             jpeg = it["get_img"]()
             if jpeg:
