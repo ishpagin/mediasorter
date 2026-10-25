@@ -1328,13 +1328,17 @@ with st.sidebar:
 
     def _create_collection():
         name = state.new_coll_name.strip()
-        if name and name not in colls.values():
-            state.collection = ps.create_collection(con, name)
-        state.new_coll_name = ""
+        if not name:
+            st.toast("Впиши название подборки")
+            return
+        same = [cid for cid, n in colls.items() if n == name]
+        state.collection = same[0] if same else ps.create_collection(con, name)
+        st.toast(f"Подборка «{name}» уже есть, выбрал её" if same else f"Подборка «{name}» создана и выбрана")
 
     with c2.popover(":material/add:", help="Новая подборка"):
-        st.text_input("Название", placeholder="Для мамы, Саше с моря...", key="new_coll_name")
-        st.button("Создать", on_click=_create_collection)
+        with st.form("new_coll", clear_on_submit=True, border=False):  # a form: Enter creates it too
+            st.text_input("Название", placeholder="Для мамы, Саше с моря...", key="new_coll_name")
+            st.form_submit_button("Создать", on_click=_create_collection)
     if state.get("undo") and st.button(":material/undo: Отменить последнее (Ctrl+Z)", width="stretch",
                                        help="Вернуть последнее удаление, раскладку по подборкам или правку лиц"):
         undo_last()
