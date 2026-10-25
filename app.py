@@ -911,6 +911,9 @@ def stack_caption(rank, m):
     return head + (" · " + " · ".join(bits) if bits else "")
 
 
+STACK_SORTS = {"new": "Сначала новые", "old": "Сначала старые", "big": "Сначала большие"}
+
+
 def stacks_page():
     url_page("stacks")
     st.subheader("Стопки похожих фото")
@@ -943,13 +946,24 @@ def stacks_page():
     years = ["все"] + [y for (y,) in con.execute("SELECT DISTINCT substr(f.taken_at, 1, 4) FROM stacks s "
                                                   "JOIN files f ON f.id = s.file_id ORDER BY 1 DESC")]
     kind = "series"
-    year = st.columns([3, 1])[1].selectbox("Год", years, key="st_year")
+    url_init("st_sort", "sort", "new", lambda v: v if v in STACK_SORTS else "new")
+    c_sort, c_year = st.columns([3, 1, 1])[1:]
+    sort = c_sort.selectbox("Порядок", list(STACK_SORTS), format_func=STACK_SORTS.get, key="st_sort")
+    year = c_year.selectbox("Год", years, key="st_year")
+    url_set("sort", sort, "new")
     url_set("year", year, "все")
     where, params = ["s.copies = 0"], []
     if year != "все":
         where.append("substr(f.taken_at, 1, 4) = ?")
         params.append(year)
     all_stacks = stacks.load_stacks(con, ("WHERE " + " AND ".join(where)) if where else "", params)
+    when = lambda st_: min((m["taken_at"] or "9999") for m in st_[2])  # the stack's first shot
+    if sort == "new":
+        all_stacks.sort(key=when, reverse=True)
+    elif sort == "old":
+        all_stacks.sort(key=when)
+    else:  # biggest first: most to clean up; same size -> newest first
+        all_stacks.sort(key=lambda st_: (len(st_[2]), when(st_)), reverse=True)
 
     items, group_of, best = [], {}, {}
     for sid, copies, members in all_stacks:
@@ -968,7 +982,7 @@ def stacks_page():
     st.caption(f"{len(all_stacks)} стопок, {len(items)} фото · если оставить только лучшие, уйдёт {n_extra}"
                + (f" · ещё {n_todo} фото без оценки" if n_todo else ""))
 
-    act = file_grid(f"stacks_{kind}_{year}", items, extra_actions=[
+    act = file_grid(f"stacks_{kind}_{year}_{sort}", items, extra_actions=[
         {"name": "keep_best", "label": ":material/star: Оставить только лучшие во всех стопках",
          "label_sel": ":material/star: Оставить только лучшие в стопках выбранных ({n})", "danger": True},
         {"name": "keep_sel", "label": ":material/check_circle: Оставить выбранные, остальное из их стопок удалить",
