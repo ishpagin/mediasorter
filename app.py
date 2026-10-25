@@ -35,6 +35,10 @@ h1, h2, h3 { text-wrap: balance; }
     box-shadow: 0 0 0 1px rgba(29, 32, 36, .07), 0 1px 2px rgba(36, 48, 66, .10), 0 6px 14px -8px rgba(36, 48, 66, .28);
 }
 [class*="st-key-mount_"] img { border-radius: 2px; }
+/* screen change: content rises in once; two identical keyframes so switching the name replays it */
+@keyframes lt-enter-0 { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes lt-enter-1 { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { [data-testid="stMainBlockContainer"] { animation: none !important; } }
 </style>""")
 con = stacks.open_db(DB)
 state = st.session_state
@@ -161,7 +165,7 @@ def label(pid, name):
 def file_caption(path, kind, taken_at, place, t=None):
     cap = os.path.basename(path)
     if kind == "video":
-        cap = f"🎬 {cap}" + (f" · {t:.0f}s" if t is not None else "")
+        cap = f":material/movie: {cap}" + (f" · {t:.0f}s" if t is not None else "")
     info = " · ".join(x for x in ((taken_at or "")[:10], place) if x)
     return cap + (f"\n{info}" if info else "")
 
@@ -231,7 +235,7 @@ def delete_files(paths):
     try:
         delete_now(paths)
     except PermissionError as e:
-        state.flash = f"⛔ {e}"
+        state.flash = f":material/block: {e}"
     st.rerun()
 
 
@@ -274,7 +278,7 @@ def who_dialog(file_ids, src=None):
 
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     new_name = c1.text_input("Нет в списке? Новый человек", key=f"who_new_{nonce}", placeholder="Имя")
-    if c2.button("➕ Добавить", disabled=not new_name.strip(), width="stretch"):
+    if c2.button(":material/add: Добавить", disabled=not new_name.strip(), width="stretch"):
         state[f"who_bulk_{nonce}"] = ps.create_person(con, new_name.strip())
         set_all(nonce, shown, src)
         st.rerun(scope="fragment")
@@ -317,7 +321,7 @@ def who_dialog(file_ids, src=None):
         for pid, face_ids in changes.items():
             before += ps.assign_faces(con, face_ids, pid)
         state.setdefault("undo", []).append({"kind": "faces", "before": before})
-        state.flash = (f"👤 Исправлено: {', '.join(names[p if p is not None else NOBODY] for p in changes)}"
+        state.flash = (f":material/person: Исправлено: {', '.join(names[p if p is not None else NOBODY] for p in changes)}"
                        f" · Ctrl+Z — вернуть")
         st.rerun()
 
@@ -357,7 +361,7 @@ def undo_last():
     else:
         done, problems = ps.restore_deleted(con, step["ids"])
         state.flash = f"Возвращено: {done}"
-    state.flash += "".join(f" · ⚠ {os.path.basename(p)}: {why}" for p, why in problems)
+    state.flash += "".join(f" · :material/warning: {os.path.basename(p)}: {why}" for p, why in problems)
 
 
 def copy_mode():
@@ -380,8 +384,8 @@ def collect_now(paths, cid=None, copy=None):
         done, failed, added = ps.move_to_collection(con, cid, paths, copy)
     if added:
         state.setdefault("undo", []).append({"kind": "collect", "pairs": added})
-    state.flash = (f"{'📄 Скопировано' if copy else '📥 Перемещено'} в «{name}»: {done} · Ctrl+Z — вернуть"
-                   + "".join(f" · ⚠ {os.path.basename(p)}: {why}" for p, why in failed))
+    state.flash = (f"{':material/file_copy: Скопировано' if copy else ':material/collections_bookmark: Перемещено'} в «{name}»: {done} · Ctrl+Z — вернуть"
+                   + "".join(f" · :material/warning: {os.path.basename(p)}: {why}" for p, why in failed))
 
 
 @st.dialog("В подборку", width="large")
@@ -400,7 +404,7 @@ def collect_dialog(file_ids, paths):
         cols = st.columns(4)
         for i, (pid, name, n) in enumerate(people):
             more = f" ({n}/{len(file_ids)})" if len(file_ids) > 1 else ""
-            if cols[i % 4].button(f"📥 {name}{more}", key=f"cd_p_{pid}", width="stretch"):
+            if cols[i % 4].button(f":material/collections_bookmark: {name}{more}", key=f"cd_p_{pid}", width="stretch"):
                 collect_now(paths, ps.collection_for_person(con, pid), copy)
                 st.rerun()
     colls = dict(con.execute("SELECT id, name FROM collections ORDER BY created_at DESC"))
@@ -408,12 +412,12 @@ def collect_dialog(file_ids, paths):
         c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
         cid = c1.selectbox("Любая подборка", list(colls), format_func=colls.get, index=None,
                            placeholder="начни вводить название")
-        if c2.button(f"📥 {verb}", disabled=cid is None, width="stretch", key="cd_any"):
+        if c2.button(f":material/collections_bookmark: {verb}", disabled=cid is None, width="stretch", key="cd_any"):
             collect_now(paths, cid, copy)
             st.rerun()
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     new = c1.text_input("Новая подборка", placeholder="Название")
-    if c2.button(f"➕ Создать и {verb.lower()}", disabled=not new.strip(), width="stretch"):
+    if c2.button(f":material/add: Создать и {verb.lower()}", disabled=not new.strip(), width="stretch"):
         collect_now(paths, ps.create_collection(con, new.strip()), copy)
         st.rerun()
 
@@ -425,10 +429,10 @@ def collect_by_people_now(file_ids):
     if added:
         state.setdefault("undo", []).append({"kind": "collect", "pairs": added})
     parts = [f"{name}: {n}" for name, n in sorted(per_person.items(), key=lambda kv: -kv[1])]
-    state.flash = ("👥 Разложено — " + (", ".join(parts) if parts else "никуда")
-                   + (f" · без подписанных людей: {len(nobody)} (подпиши людей или используй 📥)" if nobody else "")
+    state.flash = (":material/group: Разложено — " + (", ".join(parts) if parts else "никуда")
+                   + (f" · без подписанных людей: {len(nobody)} (подпиши людей или используй :material/collections_bookmark:)" if nobody else "")
                    + (" · Ctrl+Z — вернуть" if added else "")
-                   + "".join(f" · ⚠ {os.path.basename(p)}: {why}" for p, why in failed))
+                   + "".join(f" · :material/warning: {os.path.basename(p)}: {why}" for p, why in failed))
 
 
 def file_grid(key, rows, extra_actions=(), videos=None, collect=True, person=None):
@@ -451,17 +455,17 @@ def file_grid(key, rows, extra_actions=(), videos=None, collect=True, person=Non
         n_hidden = sum(r["kind"] == "video" for r in rows)
         rows = [r for r in rows if r["kind"] != "video"]
         if n_hidden:
-            notes.append(f"🎬 Скрыто видео: {n_hidden} — они в разделе «Видео» или включи «Показывать и видео» слева.")
+            notes.append(f":material/movie: Скрыто видео: {n_hidden} — они в разделе «Видео» или включи «Показывать и видео» слева.")
     hide_collected = collect and state.get("hide_collected", True)
     if hide_collected:
         n_coll = sum(r["id"] in IN_COLLECTION for r in rows)
         rows = [r for r in rows if r["id"] not in IN_COLLECTION]
         if n_coll:
-            notes.append(f"📥 Скрыто уже в подборках: {n_coll} — выключи «Скрывать то, что в подборках» слева.")
+            notes.append(f":material/collections_bookmark: Скрыто уже в подборках: {n_coll} — выключи «Скрывать то, что в подборках» слева.")
     if notes:
         note_slot.caption("  \n".join(notes))
     if not rows and state.get("undo"):  # nothing left to hover for Ctrl+Z (e.g. everything was just deleted)
-        if st.button("↩ Вернуть последнее (Ctrl+Z)", key=f"undo_{key}"):
+        if st.button(":material/undo: Вернуть последнее (Ctrl+Z)", key=f"undo_{key}"):
             undo_last()
             st.rerun()
     if any("group" in r for r in rows):  # the header goes on the first visible item of each group
@@ -477,21 +481,21 @@ def file_grid(key, rows, extra_actions=(), videos=None, collect=True, person=Non
     actions = list(extra_actions)
     if collect:
         target = current_collection_name() or "новую подборку"
-        into = f"📄 Копия в «{target}»" if copy_mode() else f"📥 В «{target}»"
+        into = f":material/file_copy: Копия в «{target}»" if copy_mode() else f":material/collections_bookmark: В «{target}»"
         actions[:0] = [
             {"name": "collect", "label": into, "label_sel": f"{into} ({{n}})", "need_sel": True, "viewer": into},
-            {"name": "collect_to", "label": "📥 В подборку…", "label_sel": "📥 В подборку… ({n})", "need_sel": True,
-             "viewer": "📥 Куда…", "stay": True},
-            {"name": "by_people", "label": "👥 По людям", "label_sel": "👥 По людям ({n})", "need_sel": True,
-             "viewer": "👥 По людям"},
+            {"name": "collect_to", "label": ":material/collections_bookmark: В подборку…", "label_sel": ":material/collections_bookmark: В подборку… ({n})", "need_sel": True,
+             "viewer": ":material/collections_bookmark: Куда…", "stay": True},
+            {"name": "by_people", "label": ":material/group: По людям", "label_sel": ":material/group: По людям ({n})", "need_sel": True,
+             "viewer": ":material/group: По людям"},
         ]
-    actions.append({"name": "who", "label": "👤 Кто на фото", "label_sel": "👤 Кто на фото ({n})", "need_sel": True,
-                    "viewer": "👤 Кто это", "stay": True})
+    actions.append({"name": "who", "label": ":material/person: Кто на фото", "label_sel": ":material/person: Кто на фото ({n})", "need_sel": True,
+                    "viewer": ":material/person: Кто это", "stay": True})
     if not any(ps.is_protected(p) for p in paths.values()):
-        actions = [{"name": "delete", "label": "🗑 Удалить выбранные", "label_sel": "🗑 Удалить выбранные ({n})",
+        actions = [{"name": "delete", "label": ":material/delete: Удалить выбранные", "label_sel": ":material/delete: Удалить выбранные ({n})",
                     "need_sel": True, "danger": True}] + actions
     else:
-        note_slot.caption("🔒 Папка защищена (protected.txt), удаление выключено")
+        note_slot.caption(":material/lock: Папка защищена (protected.txt), удаление выключено")
     act = photo_grid(lid, rows[:limit], len(rows), limit < len(rows), actions, on_more=_bump(lid, limit),
                      media=media_server_for(DB))
     if not act:
@@ -542,11 +546,11 @@ def current_collection_name():
 
 
 def preview_row(fid, path, kind, taken_at, place, extra="", coll=True):
-    """coll: show the "📥 collections" line."""
+    """coll: show the ":material/collections_bookmark: collections" line."""
     who = PEOPLE_IN.get(fid)
     coll = IN_COLLECTION.get(fid) if coll else None
     return {"id": fid, "path": path, "kind": kind, "img": f"p{fid}", "get_img": lambda: preview(fid),
-            "cap": (f"👤 {who}\n" if who else "") + (f"📥 {coll}\n" if coll else "")
+            "cap": (f":material/person: {who}\n" if who else "") + (f":material/collections_bookmark: {coll}\n" if coll else "")
                    + file_caption(path, kind, taken_at, place) + extra,
             "title": path}
 
@@ -684,11 +688,11 @@ def person_page():
         con.commit()
         st.rerun()
     skip = st.toggle("Не раскладывать по подборкам (это я)", value=bool(skip_collect), key=f"skip_{pid}",
-                     help="«👥 По людям» не будет создавать подборку для этого человека")
+                     help="«:material/group: По людям» не будет создавать подборку для этого человека")
     if skip != bool(skip_collect):
         con.execute("UPDATE persons SET skip_collect = ? WHERE id = ?", (int(skip), pid))
         con.commit()
-    with st.popover("🔗 Это на самом деле другой человек…"):
+    with st.popover(":material/link: Это на самом деле другой человек…"):
         st.caption(f"Все лица «{label(pid, name)}» ({nf} файлов) перейдут к выбранному человеку. Ctrl+Z — вернуть.")
         others = con.execute("SELECT id, name FROM persons WHERE id != ? AND (name IS NOT NULL OR n_files >= 3) "
                              "ORDER BY name IS NULL, lower(name), n_files DESC", (pid,)).fetchall()
@@ -700,11 +704,11 @@ def person_page():
             to = ps.create_person(con, new_to.strip()) if new_to.strip() else to
             face_ids = [i for (i,) in con.execute("SELECT id FROM faces WHERE person_id = ?", (pid,))]
             state.setdefault("undo", []).append({"kind": "faces", "before": ps.assign_faces(con, face_ids, to)})
-            state.flash = f"🔗 «{label(pid, name)}» → «{label(to, onames.get(to) or new_to.strip())}»: {len(face_ids)} лиц · Ctrl+Z — вернуть"
+            state.flash = f":material/link: «{label(pid, name)}» → «{label(to, onames.get(to) or new_to.strip())}»: {len(face_ids)} лиц · Ctrl+Z — вернуть"
             state._goto_person = to  # the URL must change in a normal run, not right before st.rerun()
             st.rerun()
     if not name:
-        st.caption("👥 «По людям» раскладывает только по подписанным людям — дай имя, чтобы у него была своя подборка.")
+        st.caption(":material/group: «По людям» раскладывает только по подписанным людям — дай имя, чтобы у него была своя подборка.")
 
     f1, f2 = st.columns([3, 1])
     url_init(f"mode_{pid}", "mode", "all", lambda v: v if v in PERSON_MODES else "all")
@@ -864,7 +868,7 @@ def files_page(page, view, title, only_video=False):
         FROM {view} v WHERE {' AND '.join(where)} ORDER BY taken_at, path
     """, params).fetchall()
     file_grid(f"{view}_{only_video}_{year}_{cat}_{place}",
-              [preview_row(fid, path, k, taken_at, pl, f"\n🏷 {tag}" if tag else "")
+              [preview_row(fid, path, k, taken_at, pl, f"\n:material/label: {tag}" if tag else "")
                for fid, path, k, taken_at, pl, tag in rows],
               videos=True if only_video else None)
     url_done(page)
@@ -894,7 +898,7 @@ def stack_caption(rank, m):
     bits = [f"резкость {m['sharp']:.0f}"] if m["sharp"] is not None else []
     if m["face_sharp"] is not None:
         bits.append(f"лица {m['face_sharp']:.0f}")
-    head = "⭐ лучший" if rank == 0 else f"#{rank + 1} · {m['score']:.0f}"
+    head = ":material/star: лучший" if rank == 0 else f"#{rank + 1} · {m['score']:.0f}"
     return head + (" · " + " · ".join(bits) if bits else "")
 
 
@@ -902,7 +906,7 @@ def stacks_page():
     url_page("stacks")
     st.subheader("Стопки похожих фото")
     st.caption("Серии и повторные дубли одного момента (в т.ч. с разных телефонов и фотоаппарата) и копии одного кадра. "
-               "Внутри стопки лучший — первым (⭐). Похожесть определяет нейросеть SigLIP2, время съёмки — подсказка.")
+               "Внутри стопки лучший — первым (:material/star:). Похожесть определяет нейросеть SigLIP2, время съёмки — подсказка.")
     if not con.execute("SELECT 1 FROM clip LIMIT 1").fetchone():
         st.info("Сначала посчитай векторы картинок: `python scenes.py embed`")
         return
@@ -910,12 +914,12 @@ def stacks_page():
     n_todo = con.execute("SELECT COUNT(*) FROM stacks s WHERE NOT EXISTS "
                          "(SELECT 1 FROM quality q WHERE q.file_id = s.file_id)").fetchone()[0]
     c1, c2 = st.columns(2)
-    if c1.button("🔄 Собрать стопки заново" if n_stacks else "Собрать стопки", type="secondary" if n_stacks else "primary"):
+    if c1.button(":material/refresh: Собрать стопки заново" if n_stacks else "Собрать стопки", type="secondary" if n_stacks else "primary"):
         bar = st.progress(0.0, "Ищу похожие фото...")
         k, n = stacks.build(con, progress=lambda f: bar.progress(min(1.0, f), "Ищу похожие фото..."))
         state.flash = f"Стопок: {k}, фото в них: {n}"
         st.rerun()
-    if n_todo and c2.button(f"⭐ Оценить качество ({n_todo} фото, ~{max(1, n_todo // 1500)} мин)", type="primary",
+    if n_todo and c2.button(f":material/star: Оценить качество ({n_todo} фото, ~{max(1, n_todo // 1500)} мин)", type="primary",
                             help="Читает оригиналы (только чтение): резкость кадра и лиц, экспозиция, «красота» по нейросети"):
         bar = st.progress(0.0, "Оцениваю...")
         stacks.score(con, workers=12, progress=lambda f: bar.progress(min(1.0, f), f"Оцениваю... {f:.0%}"))
@@ -925,7 +929,7 @@ def stacks_page():
         url_done("stacks")
         return
 
-    st.page_link(PAGES["copies"], label="Копии одного кадра (оставить по одной) — в разделе «Копии»", icon="👯")
+    st.page_link(PAGES["copies"], label="Копии одного кадра (оставить по одной) — в разделе «Копии»", icon=":material/content_copy:")
     url_init("st_year", "year", "все")
     years = ["все"] + [y for (y,) in con.execute("SELECT DISTINCT substr(f.taken_at, 1, 4) FROM stacks s "
                                                   "JOIN files f ON f.id = s.file_id ORDER BY 1 DESC")]
@@ -956,10 +960,10 @@ def stacks_page():
                + (f" · ещё {n_todo} фото без оценки" if n_todo else ""))
 
     act = file_grid(f"stacks_{kind}_{year}", items, extra_actions=[
-        {"name": "keep_best", "label": "⭐ Оставить только лучшие во всех стопках",
-         "label_sel": "⭐ Оставить только лучшие в стопках выбранных ({n})", "danger": True},
-        {"name": "keep_sel", "label": "✅ Оставить выбранные, остальное из их стопок удалить",
-         "label_sel": "✅ Оставить выбранные ({n}), остальное из их стопок удалить", "need_sel": True, "danger": True},
+        {"name": "keep_best", "label": ":material/star: Оставить только лучшие во всех стопках",
+         "label_sel": ":material/star: Оставить только лучшие в стопках выбранных ({n})", "danger": True},
+        {"name": "keep_sel", "label": ":material/check_circle: Оставить выбранные, остальное из их стопок удалить",
+         "label_sel": ":material/check_circle: Оставить выбранные ({n}), остальное из их стопок удалить", "need_sel": True, "danger": True},
     ])
     if act and act["name"] in ("keep_best", "keep_sel"):
         keep_only(act, {sid: ms for sid, _, ms in all_stacks}, best, group_of)
@@ -989,7 +993,7 @@ def copies_page():
     url_page("copies")
     st.subheader("Копии одного кадра")
     st.caption("Один и тот же снимок несколько раз: `X.jpg` и `X(0).jpg`, HEIC и его JPEG, RAW+JPEG, уменьшенные и "
-               "пересланные копии. Можно оставить по одной — первая в группе (⭐) остаётся.")
+               "пересланные копии. Можно оставить по одной — первая в группе (:material/star:) остаётся.")
     if not con.execute("SELECT 1 FROM clip LIMIT 1").fetchone():
         st.info("Сначала посчитай векторы картинок: `python scenes.py embed`")
         return
@@ -1030,7 +1034,7 @@ def copies_page():
         for rank, m in enumerate(members):
             it = preview_row(m["id"], m["path"], m["kind"], m["taken_at"], m["place"])
             ext = os.path.splitext(m["path"])[1].upper().lstrip(".")
-            it["cap"] = (("⭐ оставить" if rank == 0 else "копия")
+            it["cap"] = ((":material/star: оставить" if rank == 0 else "копия")
                          + f" · {m['w']}×{m['h']} · {m['size'] / 2**20:.1f} МБ · {ext}\n" + it["cap"])
             it["group"], it["group_head"] = gid, head
             group_of[m["id"]] = gid
@@ -1038,10 +1042,10 @@ def copies_page():
     st.caption(f"{len(groups)} групп, {len(items)} файлов · если оставить по одному, уйдёт {len(items) - len(groups)} "
                f"({sum(m['size'] for _, ms in groups for m in ms[1:]) / 2**30:.1f} ГБ)")
     act = file_grid(f"copies_{kind}_{prefer}_{year}", items, extra_actions=[
-        {"name": "keep_best", "label": "⭐ Оставить по одному во всех группах",
-         "label_sel": "⭐ Оставить по одному в группах выбранных ({n})", "danger": True},
-        {"name": "keep_sel", "label": "✅ Оставить выбранные, остальные копии удалить",
-         "label_sel": "✅ Оставить выбранные ({n}), остальные копии удалить", "need_sel": True, "danger": True},
+        {"name": "keep_best", "label": ":material/star: Оставить по одному во всех группах",
+         "label_sel": ":material/star: Оставить по одному в группах выбранных ({n})", "danger": True},
+        {"name": "keep_sel", "label": ":material/check_circle: Оставить выбранные, остальные копии удалить",
+         "label_sel": ":material/check_circle: Оставить выбранные ({n}), остальные копии удалить", "need_sel": True, "danger": True},
     ])
     if act and act["name"] in ("keep_best", "keep_sel"):
         keep_only(act, dict(groups), keepers, group_of)
@@ -1174,14 +1178,14 @@ def confirm_finish(cid, name, n, size_mb):
     sure = st.checkbox(f"Да, я отправил(а) и удаляю эти {n} файлов")
     if st.button("Удалить", type="primary", disabled=not sure):
         done, failed = ps.finish_collection(con, cid, delete_zip=not keep_zip)
-        state.flash = f"«{name}»: удалено {done}" + (f" · ⚠ не удалось: {len(failed)}" if failed else "")
+        state.flash = f"«{name}»: удалено {done}" + (f" · :material/warning: не удалось: {len(failed)}" if failed else "")
         st.rerun()
 
 
 def collections_page():
     url_page("collections")
     st.subheader("Подборки")
-    st.caption("Собери файлы для отправки (кнопка «📥 В …» в любом списке или в просмотре), упакуй в ZIP, "
+    st.caption("Собери файлы для отправки (кнопка «:material/collections_bookmark: В …» в любом списке или в просмотре), упакуй в ZIP, "
                "отправь — и удали. Файлы при сборе **перемещаются** из архива в папку подборки на этом компьютере.")
     root = ps.collections_root(con)
     c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
@@ -1189,7 +1193,7 @@ def collections_page():
     if new_root != root:
         ps.set_setting(con, "collections_root", new_root)
         st.rerun()
-    if c2.button("📂 Открыть", key="open_root"):
+    if c2.button(":material/folder_open: Открыть", key="open_root"):
         open_in_explorer(root)
     if msg := state.pop("flash", None):
         st.success(msg)
@@ -1201,7 +1205,7 @@ def collections_page():
         LEFT JOIN files f ON f.id = c.file_id GROUP BY k.id ORDER BY k.created_at DESC
     """).fetchall()
     if not colls:
-        st.info("Подборок пока нет. Создай её в боковой панели или просто нажми «📥» у выделенных файлов.")
+        st.info("Подборок пока нет. Создай её в боковой панели или просто нажми «:material/collections_bookmark:» у выделенных файлов.")
         url_done("collections")
         return
 
@@ -1211,23 +1215,23 @@ def collections_page():
     for cid, name, folder, n, mb, n_video in colls:
         with st.container(border=True, key=f"mount_c_{cid}"):
             z = ps.collection_zip_path(con, cid)
-            zinfo = f" · 📦 ZIP {os.path.getsize(z) / 1e6:.0f} МБ" if os.path.exists(z) else ""
+            zinfo = f" · :material/folder_zip: ZIP {os.path.getsize(z) / 1e6:.0f} МБ" if os.path.exists(z) else ""
             cols = st.columns([4, 1, 1, 1, 1.4], vertical_alignment="center")
             cols[0].markdown(f"**{name}** · {n} файлов ({n_video or 0} видео) · {mb:.0f} МБ{zinfo}  \n"
                              f"<small>{folder}</small>", unsafe_allow_html=True)
-            if cols[1].button("👁 Показать", key=f"show_{cid}", disabled=state.coll_open == cid):
+            if cols[1].button(":material/visibility: Показать", key=f"show_{cid}", disabled=state.coll_open == cid):
                 state.coll_open = cid
                 st.rerun()
-            if cols[2].button("📂 Папка", key=f"open_{cid}"):
+            if cols[2].button(":material/folder_open: Папка", key=f"open_{cid}"):
                 open_in_explorer(folder)
-            if cols[3].button("📦 ZIP", key=f"zip_{cid}", disabled=not n,
+            if cols[3].button(":material/folder_zip: ZIP", key=f"zip_{cid}", disabled=not n,
                               help="Собрать архив рядом с папкой и открыть её — останется перетащить в мессенджер"):
                 with st.spinner(f"Пакую «{name}»..."):
                     out, k = ps.zip_collection(con, cid)
                 open_in_explorer(os.path.dirname(out))
                 state.flash = f"Готово: {out} ({k} файлов)"
                 st.rerun()
-            if cols[4].button("✅ Отправлено — удалить", key=f"done_{cid}", disabled=not n, type="primary"):
+            if cols[4].button(":material/check_circle: Отправлено — удалить", key=f"done_{cid}", disabled=not n, type="primary"):
                 confirm_finish(cid, name, n, mb)
             if not n and cols[4].button("Удалить пустую", key=f"rm_{cid}"):
                 con.execute("DELETE FROM collections WHERE id = ?", (cid,))
@@ -1248,16 +1252,16 @@ def collections_page():
     items = []
     for fid, path, kind, taken_at, place, original, also in rows:
         it = preview_row(fid, path, kind, taken_at, place,
-                         (f"\n📥 ещё в: {also}" if also else "") + f"\n↩ {os.path.dirname(original)}", coll=False)
+                         (f"\n:material/collections_bookmark: ещё в: {also}" if also else "") + f"\n:material/undo: {os.path.dirname(original)}", coll=False)
         items.append(it)
-    st.caption("«↩ Убрать из подборки»: если файл есть и в других подборках, он останется там; "
+    st.caption("«:material/undo: Убрать из подборки»: если файл есть и в других подборках, он останется там; "
                "если только здесь — вернётся в архив на прежнее место.")
     act = file_grid(f"coll_{cid}", items, videos=True, collect=False, extra_actions=[
-        {"name": "uncollect", "label": "↩ Убрать из подборки", "label_sel": "↩ Убрать из подборки ({n})",
+        {"name": "uncollect", "label": ":material/undo: Убрать из подборки", "label_sel": ":material/undo: Убрать из подборки ({n})",
          "need_sel": True}])
     if act and act["name"] == "uncollect" and act["ids"]:
         done, failed = ps.return_from_collection(con, [(cid, fid) for fid in act["ids"]])
-        state.flash = f"Убрано: {done}" + "".join(f" · ⚠ {w}" for _, w in failed)
+        state.flash = f"Убрано: {done}" + "".join(f" · :material/warning: {w}" for _, w in failed)
         st.rerun()
     url_done("collections")
 
@@ -1265,20 +1269,24 @@ def collections_page():
 # ---------------------------------------------------------------- navigation: every section has its own URL
 
 PAGES = {
-    "people": st.Page(people_page, title="Люди", icon="👥", url_path="people", default=True),
+    "people": st.Page(people_page, title="Люди", icon=":material/group:", url_path="people", default=True),
     "person": st.Page(person_page, title="Человек", url_path="person", visibility="hidden"),
-    "group": st.Page(group_page, title="Только выбранные люди", icon="🎯", url_path="only"),
-    "similar": st.Page(similar_page, title="Похожие люди", icon="🔗", url_path="similar"),
-    "search": st.Page(search_page, title="Поиск", icon="🔎", url_path="search"),
-    "files": st.Page(all_files_page, title="Все файлы", icon="🗂", url_path="files"),
-    "nopeople": st.Page(no_people_page, title="Без людей", icon="🏞", url_path="no-people"),
-    "strangers": st.Page(strangers_page, title="Только посторонние", icon="👤", url_path="strangers"),
-    "videos": st.Page(videos_page, title="Видео", icon="🎬", url_path="videos"),
-    "stacks": st.Page(stacks_page, title="Стопки похожих", icon="📚", url_path="stacks"),
-    "copies": st.Page(copies_page, title="Копии", icon="👯", url_path="copies"),
-    "collections": st.Page(collections_page, title="Подборки", icon="📥", url_path="collections"),
+    "group": st.Page(group_page, title="Только выбранные люди", icon=":material/person_search:", url_path="only"),
+    "similar": st.Page(similar_page, title="Похожие люди", icon=":material/link:", url_path="similar"),
+    "search": st.Page(search_page, title="Поиск", icon=":material/search:", url_path="search"),
+    "files": st.Page(all_files_page, title="Все файлы", icon=":material/photo_library:", url_path="files"),
+    "nopeople": st.Page(no_people_page, title="Без людей", icon=":material/landscape:", url_path="no-people"),
+    "strangers": st.Page(strangers_page, title="Только посторонние", icon=":material/person:", url_path="strangers"),
+    "videos": st.Page(videos_page, title="Видео", icon=":material/movie:", url_path="videos"),
+    "stacks": st.Page(stacks_page, title="Стопки похожих", icon=":material/stacks:", url_path="stacks"),
+    "copies": st.Page(copies_page, title="Копии", icon=":material/content_copy:", url_path="copies"),
+    "collections": st.Page(collections_page, title="Подборки", icon=":material/collections_bookmark:", url_path="collections"),
 }
 nav = st.navigation(list(PAGES.values()))
+if state.get("_page") != nav.url_path:  # another screen: flip the animation name so the browser replays it
+    state._page, state._enter = nav.url_path, 1 - state.get("_enter", 0)
+st.html(f'<style>[data-testid="stMainBlockContainer"] {{ animation: lt-enter-{state.get("_enter", 0)} '
+        f'320ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }}</style>')  # backwards: no transform left after it ends, or position:fixed (the viewer) would be trapped inside
 IN_COLLECTION = in_collection()
 PEOPLE_IN = people_in()
 
@@ -1295,15 +1303,15 @@ with st.sidebar:
               help="Фото, уже разложенные по подборкам, не показываются в списках. "
                    "Их видно на странице «Подборки».")
 
-    # current collection: where "📥" moves the selected files
+    # current collection: where ":material/collections_bookmark:" moves the selected files
     colls = dict(con.execute("SELECT id, name FROM collections ORDER BY created_at DESC"))
     if "_next_collection" in state:
         state.collection = state.pop("_next_collection")
     if state.get("collection") not in colls:
         state.collection = next(iter(colls), None)
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-    c1.selectbox("📥 Подборка", list(colls) or [None], key="collection",
-                 format_func=lambda c: colls.get(c, "— нет —"), help="Куда кнопка «📥» кладёт выделенные файлы")
+    c1.selectbox(":material/collections_bookmark: Подборка", list(colls) or [None], key="collection",
+                 format_func=lambda c: colls.get(c, "— нет —"), help="Куда кнопка «:material/collections_bookmark:» кладёт выделенные файлы")
     st.radio("В подборку", ["Перемещать", "Копировать"], key="collect_mode", horizontal=True,
              help="Перемещать — файл уезжает из архива в папку подборки. "
                   "Копировать — в подборку кладётся копия, оригинал остаётся в архиве.")
@@ -1314,7 +1322,7 @@ with st.sidebar:
             state.collection = ps.create_collection(con, name)
         state.new_coll_name = ""
 
-    with c2.popover("➕", help="Новая подборка"):
+    with c2.popover(":material/add:", help="Новая подборка"):
         st.text_input("Название", placeholder="Для мамы, Саше с моря...", key="new_coll_name")
         st.button("Создать", on_click=_create_collection)
     if st.button("Пересчитать кластеры", help="Имена и слияния сохраняются"):

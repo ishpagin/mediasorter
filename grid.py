@@ -2,7 +2,7 @@
 
 Selection lives entirely in the browser (no Python reruns while clicking):
 click = select one, Ctrl/Cmd+click = toggle, Shift+click = range, drag on the grid = rubber band,
-Ctrl+A = select all loaded, Esc = clear, Delete = delete selected, 🗑 on hover = delete one.
+Ctrl+A = select all loaded, Esc = clear, Delete = delete selected, the bin on hover = delete one.
 Double click / Enter / ⤢ = full-screen viewer (originals via media_server): ←/→, Delete, F = fullscreen, Esc,
 Ctrl+D = delete at once (no dialog), Ctrl+Z = undo the last deletion (also in the grid).
 Python only receives actions: {"name": ..., "ids": [...]}.
@@ -15,6 +15,12 @@ import base64
 import streamlit as st
 
 _JS = r"""
+// ':material/name:' (Streamlit's own label syntax) -> an icon from the Material Symbols font Streamlit already ships
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const ico = (name) => `<span class="ps-ico" aria-hidden="true">${name}</span>`;
+const rich = (t) => esc(t).replace(/:material\/([a-z0-9_]+):/g, (_, n) => ico(n));
+const plain = (t) => String(t).replace(/:material\/[a-z0-9_]+:\s?/g, '');
+
 export default function(component) {
     const { data, parentElement, setTriggerValue } = component;
     const cache = (window.__psImg = window.__psImg || new Map());
@@ -37,11 +43,11 @@ export default function(component) {
               <div class="ps-vtop"><span class="ps-vcap"></span>
                 <span class="ps-vhint">← → листать · Ctrl+D удалить сразу · Ctrl+Z вернуть · F экран · Esc</span>
                 <span class="ps-vbtns"><span class="ps-vacts"></span>
-                <button class="ps-vbtn ps-vfs" title="Во весь экран (F)">⛶</button>
-                <button class="ps-vbtn danger ps-vdel" title="Удалить (Delete)">🗑 Удалить</button>
-                <button class="ps-vbtn ps-vclose" title="Закрыть (Esc)">✕</button></span></div>
-              <button class="ps-vnav ps-vprev" title="Предыдущее (←)">‹</button>
-              <button class="ps-vnav ps-vnext" title="Следующее (→)">›</button>
+                <button class="ps-vbtn ps-vfs" title="Во весь экран (F)">${ico('fullscreen')}</button>
+                <button class="ps-vbtn danger ps-vdel" title="Удалить (Delete)">${ico('delete')} Удалить</button>
+                <button class="ps-vbtn ps-vclose" title="Закрыть (Esc)">${ico('close')}</button></span></div>
+              <button class="ps-vnav ps-vprev" title="Предыдущее (←)">${ico('chevron_left')}</button>
+              <button class="ps-vnav ps-vnext" title="Следующее (→)">${ico('chevron_right')}</button>
             </div>`;
         parentElement.appendChild(root);
         root._s = { list: null, sel: new Set(), anchor: null, order: [], tiles: new Map(), heads: new Map(), items: new Map(),
@@ -75,7 +81,7 @@ export default function(component) {
     const headed = new Set(data.items.filter((it) => it.head).map((it) => it.id));
     for (const [id, el] of s.heads) if (!headed.has(id)) { el.remove(); s.heads.delete(id); }
     const missing = [];
-    let prev = null;
+    let prev = null, fresh = 0;
     for (const it of data.items) {
         if (it.src) cache.set(it.img, it.src);
         let el = s.tiles.get(it.id);
@@ -83,16 +89,17 @@ export default function(component) {
             el = document.createElement('div');
             el.className = 'ps-tile';
             el.dataset.id = it.id;
+            el.style.setProperty('--i', fresh++);  // new tiles lay out one after another, like a contact sheet
             el.innerHTML = `<div class="ps-img"><img draggable="false" alt="">
-                <button class="ps-open" title="Открыть на весь экран (двойной клик)">⤢</button>
-                <button class="ps-del" title="Удалить этот файл">🗑</button><span class="ps-check">✓</span></div>
+                <button class="ps-open" title="Открыть на весь экран (двойной клик)">${ico('open_in_full')}</button>
+                <button class="ps-del" title="Удалить этот файл">${ico('delete')}</button><span class="ps-check">${ico('check')}</span></div>
                 <div class="ps-cap"></div>`;
             s.tiles.set(it.id, el);
         }
         if (it.head) {
             let h = s.heads.get(it.id);
             if (!h) { h = document.createElement('div'); h.className = 'ps-head'; s.heads.set(it.id, h); }
-            h.textContent = it.head;
+            h.innerHTML = rich(it.head);
             const wantH = prev ? prev.nextSibling : grid.firstChild;
             if (wantH !== h) grid.insertBefore(h, wantH);
             prev = h;
@@ -102,8 +109,8 @@ export default function(component) {
         if (src) { if (img.getAttribute('src') !== src) img.setAttribute('src', src); }
         else missing.push(it.img);
         el.style.display = '';  // may have been hidden by a quick delete that was undone
-        el.querySelector('.ps-cap').textContent = it.cap;
-        el.title = (it.cap + '\n' + (it.title || '')).trim();
+        el.querySelector('.ps-cap').innerHTML = rich(it.cap);
+        el.title = plain(it.cap + '\n' + (it.title || '')).trim();
         const want = prev ? prev.nextSibling : grid.firstChild;
         if (want !== el) grid.insertBefore(el, want);
         prev = el;
@@ -184,15 +191,15 @@ function openView(root, id) {
         const full = new Image();
         full.onload = () => { if (s.viewing === id) img.src = full.src; };
         full.onerror = () => {
-            if (s.viewing === id) v.querySelector('.ps-vcap').textContent += ' · ⚠ оригинал недоступен (удалён или нет доступа к NAS)';
+            if (s.viewing === id) v.querySelector('.ps-vcap').innerHTML += rich(' · :material/warning: оригинал недоступен (удалён или нет доступа к NAS)');
         };
         full.src = fileUrl(root, id);
     }
     vid.onerror = () => {
-        if (s.viewing === id) v.querySelector('.ps-vcap').textContent += ' · ⚠ браузер не может воспроизвести это видео';
+        if (s.viewing === id) v.querySelector('.ps-vcap').innerHTML += rich(' · :material/warning: браузер не может воспроизвести это видео');
     };
     const i = s.order.indexOf(id);
-    v.querySelector('.ps-vcap').textContent = `${i + 1} / ${root._api.data.total} · ` + it.cap.replace(/\n/g, ' · ');
+    v.querySelector('.ps-vcap').innerHTML = rich(`${i + 1} / ${root._api.data.total} · ` + it.cap.replace(/\n/g, ' · '));
     for (const k of [1, -1]) {  // preload neighbours
         const n = s.items.get(s.order[i + k]);
         if (n && n.kind !== 'video') new Image().src = fileUrl(root, n.id);
@@ -293,13 +300,13 @@ function hideWhileDialog(root) {
 }
 
 function paintViewerActions(root) {
-    // actions that make sense for the file on screen (e.g. "📥 to collection"): apply, then show the next file
+    // actions that make sense for the file on screen (e.g. "to collection"): apply, then show the next file
     const box = root.querySelector('.ps-vacts');
     box.innerHTML = '';
     for (const a of root._api.data.actions.filter((x) => x.viewer)) {
         const b = document.createElement('button');
         b.className = 'ps-vbtn';
-        b.textContent = a.viewer;
+        b.innerHTML = rich(a.viewer);
         b.onclick = () => {
             const s = root._s, id = s.viewing;
             if (id === null) return;
@@ -330,7 +337,7 @@ function paint(root) {
     for (const a of data.actions) {
         const b = document.createElement('button');
         b.className = 'ps-btn' + (a.danger ? ' danger' : '');
-        b.textContent = n && a.label_sel ? a.label_sel.replace('{n}', n) : a.label;
+        b.innerHTML = rich(n && a.label_sel ? a.label_sel.replace('{n}', n) : a.label);
         b.disabled = (a.need_sel && !n) || (a.no_sel && n > 0 && !a.label_sel);
         b.onclick = (e) => { e.stopPropagation(); fire(root, a.name, [...s.sel]); };
         box.appendChild(b);
@@ -592,7 +599,29 @@ _CSS = r"""
     position: fixed; display: none; pointer-events: none; z-index: 1000; border-radius: 2px;
     border: 2px solid var(--lt-pick); background: rgba(242, 183, 5, .14);
 }
-@media (prefers-reduced-motion: reduce) { .ps-root *, .ps-root *::after { transition: none !important; } }
+/* icons: Material Symbols Rounded, the font Streamlit ships (offline) */
+.ps-ico {
+    font-family: 'Material Symbols Rounded'; font-weight: normal; font-style: normal; font-size: 18px; line-height: 1;
+    display: inline-block; vertical-align: -4px; letter-spacing: normal; text-transform: none; white-space: nowrap;
+    font-feature-settings: 'liga'; -webkit-font-smoothing: antialiased; user-select: none;
+}
+.ps-cap .ps-ico, .ps-head .ps-ico, .ps-vcap .ps-ico { font-size: 16px; vertical-align: -3px; }
+.ps-btn .ps-ico, .ps-vbtn .ps-ico { margin-right: 4px; }
+.ps-vfs .ps-ico, .ps-vclose .ps-ico { margin-right: 0; }
+.ps-vnav .ps-ico { font-size: 36px; vertical-align: middle; }
+.ps-check .ps-ico { font-size: 18px; vertical-align: -4px; font-weight: 700; }
+.ps-del .ps-ico, .ps-open .ps-ico { font-size: 16px; vertical-align: -3px; }
+
+/* motion: only opacity and transform (composited, no layout or repaint) and only when something new appears */
+@keyframes lt-lay { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes lt-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lt-zoom { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+.ps-tile { animation: lt-lay 360ms var(--lt-ease) backwards; animation-delay: calc(min(var(--i, 0), 24) * 16ms); }
+.ps-view:not([hidden]) { animation: lt-fade 180ms ease-out both; }
+.ps-view:not([hidden]) .ps-vimg:not([hidden]) { animation: lt-zoom 240ms var(--lt-ease) both; }
+@media (prefers-reduced-motion: reduce) {
+    .ps-root *, .ps-root *::after { transition: none !important; animation: none !important; }
+}
 """
 
 _grid = st.components.v2.component("photo_grid", js=_JS, css=_CSS)
