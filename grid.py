@@ -2,9 +2,10 @@
 
 Selection lives entirely in the browser (no Python reruns while clicking):
 click = select one, Ctrl/Cmd+click = toggle, Shift+click = range, drag on the grid = rubber band,
-Ctrl+A = select all loaded, Esc = clear, Delete = delete selected, the bin on hover = delete one.
+Ctrl+A = select all loaded, Esc = clear, Delete / Backspace = delete selected, the bin on hover = delete one.
 Double click / Enter / ⤢ = full-screen viewer (originals via media_server): ←/→, Delete, F = fullscreen, Esc,
-Ctrl+D = delete at once (no dialog), Ctrl+Z = undo the last deletion (also in the grid).
+Ctrl+D = delete at once (no dialog), Ctrl+Z = undo the last deletion (also in the grid), Tab / Shift+Tab = next /
+previous stack.
 Python only receives actions: {"name": ..., "ids": [...]}.
 
 Each image is sent to the browser once per session and cached there (window.__psImg),
@@ -33,7 +34,7 @@ export default function(component) {
         root.innerHTML = `
             <div class="ps-bar"><span class="ps-count"></span><span class="ps-actions"></span>
               <span class="ps-hint">клик — выбрать · Ctrl/Shift+клик — несколько · рамка мышью ·
-              Ctrl+A — все загруженные · двойной клик / Enter — открыть · Delete — удалить · Ctrl+Z — вернуть ·
+              Ctrl+A — все загруженные · двойной клик / Enter — открыть · Delete / Backspace — удалить · Ctrl+Z — вернуть ·
               Esc — снять</span></div>
             <div class="ps-grid"></div>
             <div class="ps-sentinel"></div>
@@ -41,7 +42,7 @@ export default function(component) {
             <div class="ps-view" hidden>
               <img class="ps-vimg" alt=""><video class="ps-vvid" controls playsinline hidden></video>
               <div class="ps-vtop"><span class="ps-vcap"></span>
-                <span class="ps-vhint">← → листать · Ctrl+D удалить сразу · Ctrl+Z вернуть · F экран · Esc</span>
+                <span class="ps-vhint">← → листать · Tab / Shift+Tab стопки · Delete удалить · Ctrl+Z вернуть · F экран · Esc</span>
                 <span class="ps-vbtns"><span class="ps-vacts"></span>
                 <button class="ps-vbtn ps-vfs" title="Во весь экран (F)">${ico('fullscreen')}</button>
                 <button class="ps-vbtn danger ps-vdel" title="Удалить (Delete)">${ico('delete')} Удалить</button>
@@ -266,6 +267,21 @@ function stepView(root, k) {
     const s = root._s;
     const next = s.order[s.order.indexOf(s.viewing) + k];
     if (next !== undefined) openView(root, next);
+}
+
+// Tab / Shift+Tab: first photo of the next / previous group (stack, copies); no groups here: next / previous photo
+function jumpGroup(root, k) {
+    const s = root._s, cur = s.items.get(s.viewing);
+    if (!cur || cur.group == null) { stepView(root, k); return; }
+    const grp = (x) => s.items.get(x)?.group;
+    let i = s.order.indexOf(s.viewing);
+    while (s.order[i] !== undefined && grp(s.order[i]) === cur.group) i += k;  // leave this group
+    if (s.order[i] === undefined) {  // past the loaded part: ask for more, Tab again when it is there
+        if (k > 0 && root._api.data.has_more) root._api.setTriggerValue('more', s.order.length);
+        return;
+    }
+    if (k < 0) while (i > 0 && grp(s.order[i - 1]) === grp(s.order[i])) i--;  // start of the previous group
+    openView(root, s.order[i]);
 }
 
 function deleteViewed(root) {
@@ -512,6 +528,7 @@ function setupEvents(root) {
             else if (ctrl && e.code === 'KeyZ') fn = () => undoDelete(root);
             else if (!ctrl) fn = { Escape: () => closeView(root), ArrowRight: () => stepView(root, 1),
                                    ArrowLeft: () => stepView(root, -1), Delete: () => deleteViewed(root),
+                                   Backspace: () => deleteViewed(root), Tab: () => jumpGroup(root, e.shiftKey ? -1 : 1),
                                    KeyF: () => toggleFullscreen(root) }[e.code === 'KeyF' ? 'KeyF' : e.key];
             if (fn) { e.preventDefault(); fn(); }
             return;
@@ -530,7 +547,7 @@ function setupEvents(root) {
             e.preventDefault(); s.sel = new Set(s.order); paint(root);
         } else if (e.key === 'Escape') {
             s.sel.clear(); paint(root);
-        } else if (e.key === 'Delete' && s.sel.size) {
+        } else if ((e.key === 'Delete' || e.key === 'Backspace') && s.sel.size) {
             e.preventDefault(); fire(root, 'delete', [...s.sel]);
         }
     };
