@@ -1,0 +1,11 @@
+# NVIDIA GPU (start.bat / start.sh add this file by themselves when nvidia-smi is found).
+# Linux also needs nvidia-container-toolkit; Windows: Docker Desktop with WSL 2 is enough.
+services:
+  mediasorter:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

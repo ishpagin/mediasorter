@@ -1,0 +1,14 @@
+# Photos from a NAS share over SMB, without mounting it on the computer yourself.
+# start.bat / start.sh add this file by themselves when NAS_SHARE is filled in .env.
+services:
+  mediasorter:
+    volumes:
+      - nas:/photos  # replaces the PHOTOS folder
+
+volumes:
+  nas:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: ${NAS_SHARE}
+      o: username=${NAS_USER},password=${NAS_PASSWORD},vers=3.0,iocharset=utf8,uid=0,gid=0

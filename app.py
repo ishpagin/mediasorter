@@ -21,7 +21,7 @@ _ap = argparse.ArgumentParser()
 _ap.add_argument("--db", default=ps.DEFAULT_DB)
 DB = _ap.parse_known_args(sys.argv[1:])[0].db
 
-st.set_page_config(page_title="Photosorter", layout="wide")
+st.set_page_config(page_title="Mediasorter", layout="wide")
 con = stacks.open_db(DB)
 state = st.session_state
 
@@ -205,25 +205,24 @@ def load_more(key, total):
 
 @st.dialog("Удалить файлы?", width="large")
 def confirm_delete(paths):
-    net = sum(ps.quarantine_path(p) is not None for p in paths)
-    st.write(f"Будет удалено **{len(paths)}** файл(ов).")
-    if net:
-        st.info(f"Файлы будут перемещены в карантин `{ps.QUARANTINE_DIR}` в корне того же диска NAS "
-                f"(вернуть: Ctrl+Z или `python photosorter.py restore`).")
+    """Bulk deletions (stacks / copies: keep the best) still ask first; Ctrl+Z brings them back too."""
+    st.write(f"Будет удалено **{len(paths)}** файл(ов). Ctrl+Z вернёт их.")
     st.code("\n".join(paths[:15]) + (f"\n... и ещё {len(paths) - 15}" if len(paths) > 15 else ""))
-    # one file: the button is the confirmation; many files: tick the box first
-    sure = len(paths) == 1 or st.checkbox(f"Да, я проверил(а) и хочу удалить эти {len(paths)} файлов")
-    if st.button("Удалить", type="primary", disabled=not sure):
-        try:
-            delete_now(paths)
-        except PermissionError as e:
-            st.error(str(e))
-            return
-        st.rerun()
+    if st.button("Удалить", type="primary"):
+        delete_files(paths)
+
+
+def delete_files(paths):
+    """Delete right away, no dialog: Ctrl+Z (several times) brings files back."""
+    try:
+        delete_now(paths)
+    except PermissionError as e:
+        state.flash = f"⛔ {e}"
+    st.rerun()
 
 
 def delete_now(paths, one_by_one=False):
-    """Delete without asking (confirmed already, or Ctrl+D); every batch can be undone with Ctrl+Z.
+    """Delete without asking; every batch can be undone with Ctrl+Z.
     one_by_one: each file is its own undo step (fast Ctrl+D presses may arrive here together)."""
     done, failed, log_ids = ps.trash_files(con, paths)
     stack = state.setdefault("undo", [])
@@ -347,9 +346,14 @@ def undo_last():
     state.flash += "".join(f" · ⚠ {os.path.basename(p)}: {why}" for p, why in problems)
 
 
-def collect_now(paths, cid=None):
-    """Move files into a collection (default: the current one in the sidebar); Ctrl+Z moves them back.
-    A collection chosen explicitly becomes the current one."""
+def copy_mode():
+    return state.get("collect_mode") == "Копировать"
+
+
+def collect_now(paths, cid=None, copy=None):
+    """Move or copy (default: the sidebar switch) files into a collection (default: the current one in the sidebar);
+    Ctrl+Z takes them out again. A collection chosen explicitly becomes the current one."""
+    copy = copy_mode() if copy is None else copy
     if cid is not None:
         state._next_collection = cid
     else:
@@ -358,17 +362,20 @@ def collect_now(paths, cid=None):
         cid = ps.create_collection(con, f"Подборка {datetime.now():%Y-%m-%d %H-%M}")
         state._next_collection = cid  # the sidebar selectbox is already drawn: switch on the next run
     name = con.execute("SELECT name FROM collections WHERE id = ?", (cid,)).fetchone()[0]
-    with st.spinner(f"Перемещаю {len(paths)} файл(ов) в «{name}»..."):
-        done, failed, added = ps.move_to_collection(con, cid, paths)
+    with st.spinner(f"{'Копирую' if copy else 'Перемещаю'} {len(paths)} файл(ов) в «{name}»..."):
+        done, failed, added = ps.move_to_collection(con, cid, paths, copy)
     if added:
         state.setdefault("undo", []).append({"kind": "collect", "pairs": added})
-    state.flash = (f"📥 В «{name}»: {done} · Ctrl+Z — вернуть"
+    state.flash = (f"{'📄 Скопировано' if copy else '📥 Перемещено'} в «{name}»: {done} · Ctrl+Z — вернуть"
                    + "".join(f" · ⚠ {os.path.basename(p)}: {why}" for p, why in failed))
 
 
 @st.dialog("В подборку", width="large")
 def collect_dialog(file_ids, paths):
-    """Choose where to move the selected files: a person on them, any collection, or a new one."""
+    """Choose where to move/copy the selected files: a person on them, any collection, or a new one."""
+    copy = st.radio("Что сделать", ["Переместить", "Скопировать"], index=int(copy_mode()), horizontal=True,
+                    key="cd_mode", help="Скопировать — оригинал остаётся в архиве") == "Скопировать"
+    verb = "Скопировать" if copy else "Переместить"
     q = ",".join("?" * len(file_ids))
     people = con.execute(f"""
         SELECT p.id, p.name, COUNT(DISTINCT x.file_id) FROM faces x JOIN persons p ON p.id = x.person_id
@@ -380,27 +387,27 @@ def collect_dialog(file_ids, paths):
         for i, (pid, name, n) in enumerate(people):
             more = f" ({n}/{len(file_ids)})" if len(file_ids) > 1 else ""
             if cols[i % 4].button(f"📥 {name}{more}", key=f"cd_p_{pid}", width="stretch"):
-                collect_now(paths, ps.collection_for_person(con, pid))
+                collect_now(paths, ps.collection_for_person(con, pid), copy)
                 st.rerun()
     colls = dict(con.execute("SELECT id, name FROM collections ORDER BY created_at DESC"))
     if colls:
         c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
         cid = c1.selectbox("Любая подборка", list(colls), format_func=colls.get, index=None,
                            placeholder="начни вводить название")
-        if c2.button("📥 Переместить", disabled=cid is None, width="stretch", key="cd_any"):
-            collect_now(paths, cid)
+        if c2.button(f"📥 {verb}", disabled=cid is None, width="stretch", key="cd_any"):
+            collect_now(paths, cid, copy)
             st.rerun()
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     new = c1.text_input("Новая подборка", placeholder="Название")
-    if c2.button("➕ Создать и переместить", disabled=not new.strip(), width="stretch"):
-        collect_now(paths, ps.create_collection(con, new.strip()))
+    if c2.button(f"➕ Создать и {verb.lower()}", disabled=not new.strip(), width="stretch"):
+        collect_now(paths, ps.create_collection(con, new.strip()), copy)
         st.rerun()
 
 
 def collect_by_people_now(file_ids):
     """Each file into the collections of all named people on it."""
     with st.spinner(f"Раскладываю {len(file_ids)} файл(ов) по людям..."):
-        per_person, nobody, failed, added = ps.collect_by_people(con, file_ids)
+        per_person, nobody, failed, added = ps.collect_by_people(con, file_ids, copy_mode())
     if added:
         state.setdefault("undo", []).append({"kind": "collect", "pairs": added})
     parts = [f"{name}: {n}" for name, n in sorted(per_person.items(), key=lambda kv: -kv[1])]
@@ -417,7 +424,7 @@ def file_grid(key, rows, extra_actions=(), videos=None, collect=True, person=Non
     videos: show videos too; default = the sidebar toggle (off), so a bulk delete never hits videos by accident.
     collect: offer "move to the current collection".
     person: the person whose page this is ("Кто на фото" fixes their faces first).
-    Handles delete / delete_except / collect itself; returns any other action ({"name", "ids"}) or None.
+    Handles delete / collect itself; returns any other action ({"name", "ids"}) or None.
     """
     # fixed slots above the grid: messages must not shift it, or Streamlit remounts it (selection lost)
     flash_slot, note_slot = st.empty(), st.empty()
@@ -456,9 +463,9 @@ def file_grid(key, rows, extra_actions=(), videos=None, collect=True, person=Non
     actions = list(extra_actions)
     if collect:
         target = current_collection_name() or "новую подборку"
+        into = f"📄 Копия в «{target}»" if copy_mode() else f"📥 В «{target}»"
         actions[:0] = [
-            {"name": "collect", "label": f"📥 В «{target}»", "label_sel": f"📥 В «{target}» ({{n}})",
-             "need_sel": True, "viewer": f"📥 В «{target}»"},
+            {"name": "collect", "label": into, "label_sel": f"{into} ({{n}})", "need_sel": True, "viewer": into},
             {"name": "collect_to", "label": "📥 В подборку…", "label_sel": "📥 В подборку… ({n})", "need_sel": True,
              "viewer": "📥 Куда…", "stay": True},
             {"name": "by_people", "label": "👥 По людям", "label_sel": "👥 По людям ({n})", "need_sel": True,
@@ -468,20 +475,15 @@ def file_grid(key, rows, extra_actions=(), videos=None, collect=True, person=Non
                     "viewer": "👤 Кто это", "stay": True})
     if not any(ps.is_protected(p) for p in paths.values()):
         actions = [{"name": "delete", "label": "🗑 Удалить выбранные", "label_sel": "🗑 Удалить выбранные ({n})",
-                    "need_sel": True, "danger": True},
-                   {"name": "delete_except", "label": f"Удалить все {len(rows)}",
-                    "label_sel": "Удалить все, кроме выбранных ({n})"}] + actions
+                    "need_sel": True, "danger": True}] + actions
     else:
         note_slot.caption("🔒 Папка защищена (protected.txt), удаление выключено")
     act = photo_grid(lid, rows[:limit], len(rows), limit < len(rows), actions, on_more=_bump(lid, limit),
                      media=media_server_for(DB))
     if not act:
         return None
-    ids = set(act["ids"])
     if act["name"] == "delete":
-        confirm_delete([paths[i] for i in act["ids"] if i in paths])
-    elif act["name"] == "delete_except":
-        confirm_delete([p for i, p in paths.items() if i not in ids])
+        delete_files([paths[i] for i in act["ids"] if i in paths])
     elif act["name"] == "quick_delete":  # Ctrl+D in the viewer; ids already gone are skipped
         todo = [paths[i] for i in act["ids"] if i in paths]
         if todo and not any(ps.is_protected(p) for p in todo):
@@ -1287,7 +1289,10 @@ with st.sidebar:
         state.collection = next(iter(colls), None)
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     c1.selectbox("📥 Подборка", list(colls) or [None], key="collection",
-                 format_func=lambda c: colls.get(c, "— нет —"), help="Куда кнопка «📥» перемещает выделенные файлы")
+                 format_func=lambda c: colls.get(c, "— нет —"), help="Куда кнопка «📥» кладёт выделенные файлы")
+    st.radio("В подборку", ["Перемещать", "Копировать"], key="collect_mode", horizontal=True,
+             help="Перемещать — файл уезжает из архива в папку подборки. "
+                  "Копировать — в подборку кладётся копия, оригинал остаётся в архиве.")
 
     def _create_collection():
         name = state.new_coll_name.strip()

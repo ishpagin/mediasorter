@@ -1212,7 +1212,7 @@ def _quarantine(p):
     while os.path.exists(q):  # same name deleted before
         q, n = f"{base} ({n}){ext}", n + 1
     os.makedirs(os.path.dirname(q), exist_ok=True)
-    os.rename(p, q)  # same share: instant server-side move
+    shutil.move(p, q)  # same share: an instant rename; another disk (docker volumes): copy + delete
     return q
 
 
@@ -1273,7 +1273,7 @@ def restore_deleted(con, log_ids):
                                  else f"нет в карантине: {moved_to}"))
                 continue
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            os.rename(moved_to, path)
+            shutil.move(moved_to, path)
         if not snap:  # deleted by an older version: no saved DB rows
             problems.append((path, "файл возвращён; чтобы он снова появился в базе, запусти scan"))
         elif not con.execute("SELECT 1 FROM files WHERE path = ?", (path,)).fetchone():
@@ -1336,21 +1336,24 @@ def _link_or_copy(src, dst):
         shutil.copy2(src, dst)
 
 
-def add_to_collection(con, cid, fid):
-    """Put one file into a collection. Not collected yet: MOVE it out of the archive into the collection folder
-    (files.path follows). Already in another collection: hard-link it here. Returns True if added."""
+def add_to_collection(con, cid, fid, copy=False):
+    """Put one file into a collection. copy=False and the file is in the archive: MOVE it into the collection folder
+    (files.path follows). copy=True, or the file already lives in another collection: hard-link or copy it here,
+    the original stays where it is. Returns True if added."""
     if con.execute("SELECT 1 FROM collection_files WHERE collection_id = ? AND file_id = ?", (cid, fid)).fetchone():
         return False
     path = con.execute("SELECT path FROM files WHERE id = ?", (fid,)).fetchone()[0]
-    if is_protected(path):
+    if not copy and is_protected(path):
         raise PermissionError("защищённая папка (protected.txt)")
     folder = con.execute("SELECT folder FROM collections WHERE id = ?", (cid,)).fetchone()[0]
     os.makedirs(folder, exist_ok=True)
     dst = _free_path(os.path.join(folder, os.path.basename(path)))
     prev = con.execute("SELECT original_path FROM collection_files WHERE file_id = ? LIMIT 1", (fid,)).fetchone()
-    if prev:
+    in_collection = os.path.normcase(path) in {os.path.normcase(p) for (p,) in con.execute(
+        "SELECT link_path FROM collection_files WHERE file_id = ?", (fid,))}
+    if copy or in_collection:
         _link_or_copy(path, dst)
-        original = prev[0]
+        original = prev[0] if prev else path
     else:
         shutil.move(path, dst)  # NAS -> local: copy + delete; keeps the modification time
         con.execute("UPDATE files SET path = ? WHERE id = ?", (dst, fid))
@@ -1361,13 +1364,14 @@ def add_to_collection(con, cid, fid):
     return True
 
 
-def move_to_collection(con, cid, paths):
-    """Add files (by current path) to a collection. Returns (done, [(path, error)], [(cid, fid) added])."""
+def move_to_collection(con, cid, paths, copy=False):
+    """Add files (by current path) to a collection, moved or copied (see add_to_collection).
+    Returns (done, [(path, error)], [(cid, fid) added])."""
     done, failed, added = 0, [], []
     for p in paths:
         try:
             fid = con.execute("SELECT id FROM files WHERE path = ?", (p,)).fetchone()[0]
-            if add_to_collection(con, cid, fid):
+            if add_to_collection(con, cid, fid, copy):
                 done += 1
                 added.append((cid, fid))
         except Exception as e:
@@ -1386,7 +1390,7 @@ def collection_for_person(con, pid):
     return create_collection(con, name, person_id=pid)
 
 
-def collect_by_people(con, file_ids):
+def collect_by_people(con, file_ids, copy=False):
     """Put every file into the collections of all NAMED people on it (except people marked 'this is me').
     Returns ({person name: files added}, [file ids with nobody to send to], [(path, error)], [(cid, fid) added])."""
     per_person, nobody, failed, added = {}, [], [], []
@@ -1400,7 +1404,7 @@ def collect_by_people(con, file_ids):
         for pid, name in people:
             try:
                 cid = collection_for_person(con, pid)
-                if add_to_collection(con, cid, fid):
+                if add_to_collection(con, cid, fid, copy):
                     per_person[name] = per_person.get(name, 0) + 1
                     added.append((cid, fid))
             except Exception as e:
@@ -1410,21 +1414,17 @@ def collect_by_people(con, file_ids):
 
 
 def remove_from_collection(con, cid, fid):
-    """Take a file out of one collection. If it is still in other collections only this copy (link) goes away;
-    if this was the last one, the file is moved back to its place in the archive."""
+    """Take a file out of one collection. A copy / link just goes away; the file itself (moved here from the archive)
+    goes back to its place in the archive, its copies in other collections stay."""
     row = con.execute("SELECT link_path, original_path FROM collection_files WHERE collection_id = ? AND file_id = ?",
                       (cid, fid)).fetchone()
     if not row:
         return
     link, original = row
     path = con.execute("SELECT path FROM files WHERE id = ?", (fid,)).fetchone()[0]
-    others = [p for (p,) in con.execute("SELECT link_path FROM collection_files WHERE file_id = ? AND collection_id != ?",
-                                        (fid, cid))]
-    if others:
+    if os.path.normcase(path) != os.path.normcase(link):
         if os.path.exists(link):
-            os.remove(link)  # one of several hard links: the data stays in the other collections
-        if os.path.normcase(path) == os.path.normcase(link):
-            con.execute("UPDATE files SET path = ? WHERE id = ?", (others[0], fid))
+            os.remove(link)  # a copy / hard link: the file itself stays elsewhere
     else:
         if os.path.exists(original):
             raise FileExistsError(f"на старом месте уже есть файл: {original}")
@@ -1476,14 +1476,15 @@ def finish_collection(con, cid, delete_zip=True):
                                  (cid,)).fetchall():
         others = [p for (p,) in con.execute(
             "SELECT link_path FROM collection_files WHERE file_id = ? AND collection_id != ?", (fid, cid))]
-        if not others:
-            last.append(con.execute("SELECT path FROM files WHERE id = ?", (fid,)).fetchone()[0])
+        path = con.execute("SELECT path FROM files WHERE id = ?", (fid,)).fetchone()[0]
+        moved_here = os.path.normcase(path) == os.path.normcase(link)
+        if moved_here and not others:
+            last.append(path)
             continue
-        try:
+        try:  # a copy: the original stays in the archive / other collections
             if os.path.exists(link):
                 send2trash(link)
-            path = con.execute("SELECT path FROM files WHERE id = ?", (fid,)).fetchone()[0]
-            if os.path.normcase(path) == os.path.normcase(link):
+            if moved_here:
                 con.execute("UPDATE files SET path = ? WHERE id = ?", (others[0], fid))
             con.execute("DELETE FROM collection_files WHERE collection_id = ? AND file_id = ?", (cid, fid))
             con.commit()

@@ -4,5 +4,7 @@ __pycache__/
 *.db
 *.db-*
 data/
-logs/
+collections/
+photos/
+.env
 .venv/
