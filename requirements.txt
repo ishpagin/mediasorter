@@ -1,0 +1,13 @@
+onnxruntime-gpu[cuda,cudnn]
+opencv-python
+numpy
+pillow
+pillow-heif
+av
+tqdm
+send2trash
+streamlit
+rawpy
+reverse_geocoder
+tokenizers
+playwright

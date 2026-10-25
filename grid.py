@@ -1,0 +1,617 @@
+"""Explorer-like photo grid for Streamlit (components v2).
+
+Selection lives entirely in the browser (no Python reruns while clicking):
+click = select one, Ctrl/Cmd+click = toggle, Shift+click = range, drag on the grid = rubber band,
+Ctrl+A = select all loaded, Esc = clear, Delete = delete selected, 🗑 on hover = delete one.
+Double click / Enter / ⤢ = full-screen viewer (originals via media_server): ←/→, Delete, F = fullscreen, Esc,
+Ctrl+D = delete at once (no dialog), Ctrl+Z = undo the last deletion (also in the grid).
+Python only receives actions: {"name": ..., "ids": [...]}.
+
+Each image is sent to the browser once per session and cached there (window.__psImg),
+so loading more tiles only transfers the new previews.
+"""
+import base64
+
+import streamlit as st
+
+_JS = r"""
+export default function(component) {
+    const { data, parentElement, setTriggerValue } = component;
+    const cache = (window.__psImg = window.__psImg || new Map());
+
+    let root = parentElement.querySelector('.ps-root');
+    if (!root) {
+        root = document.createElement('div');
+        root.className = 'ps-root';
+        root.tabIndex = 0;
+        root.innerHTML = `
+            <div class="ps-bar"><span class="ps-count"></span><span class="ps-actions"></span>
+              <span class="ps-hint">клик — выбрать · Ctrl/Shift+клик — несколько · рамка мышью ·
+              Ctrl+A — все загруженные · двойной клик / Enter — открыть · Delete — удалить · Ctrl+Z — вернуть ·
+              Esc — снять</span></div>
+            <div class="ps-grid"></div>
+            <div class="ps-sentinel"></div>
+            <div class="ps-band"></div>
+            <div class="ps-view" hidden>
+              <img class="ps-vimg" alt=""><video class="ps-vvid" controls playsinline hidden></video>
+              <div class="ps-vtop"><span class="ps-vcap"></span>
+                <span class="ps-vhint">← → листать · Ctrl+D удалить сразу · Ctrl+Z вернуть · F экран · Esc</span>
+                <span class="ps-vbtns"><span class="ps-vacts"></span>
+                <button class="ps-vbtn ps-vfs" title="Во весь экран (F)">⛶</button>
+                <button class="ps-vbtn danger ps-vdel" title="Удалить (Delete)">🗑 Удалить</button>
+                <button class="ps-vbtn ps-vclose" title="Закрыть (Esc)">✕</button></span></div>
+              <button class="ps-vnav ps-vprev" title="Предыдущее (←)">‹</button>
+              <button class="ps-vnav ps-vnext" title="Следующее (→)">›</button>
+            </div>`;
+        parentElement.appendChild(root);
+        root._s = { list: null, sel: new Set(), anchor: null, order: [], tiles: new Map(), heads: new Map(), items: new Map(),
+                    hover: false, viewing: null, reopen: null };
+        setupEvents(root);
+        setupViewer(root);
+    }
+    const s = root._s;
+    root._api = { setTriggerValue, data };
+    const grid = root.querySelector('.ps-grid');
+    // the action bar sticks below Streamlit's fixed header, not under it
+    const header = document.querySelector('header[data-testid="stHeader"]');
+    root.style.setProperty('--ps-top', (header ? Math.round(header.getBoundingClientRect().height) : 0) + 'px');
+
+    if (s.list !== data.list) {  // another list (filters changed): start over
+        grid.innerHTML = '';
+        s.tiles = new Map();
+        s.heads = new Map();
+        s.sel.clear();
+        s.anchor = null;
+        s.list = data.list;
+    }
+
+    // sync tiles with data.items, keeping existing DOM nodes (no flicker, scroll position kept)
+    const ids = data.items.map((it) => it.id);
+    const present = new Set(ids);
+    for (const [id, el] of s.tiles) {
+        if (!present.has(id)) { el.remove(); s.tiles.delete(id); s.sel.delete(id); }
+    }
+    // group headers (it.head: a full-width line before the item, e.g. a stack of similar photos)
+    const headed = new Set(data.items.filter((it) => it.head).map((it) => it.id));
+    for (const [id, el] of s.heads) if (!headed.has(id)) { el.remove(); s.heads.delete(id); }
+    const missing = [];
+    let prev = null;
+    for (const it of data.items) {
+        if (it.src) cache.set(it.img, it.src);
+        let el = s.tiles.get(it.id);
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'ps-tile';
+            el.dataset.id = it.id;
+            el.innerHTML = `<div class="ps-img"><img draggable="false" alt="">
+                <button class="ps-open" title="Открыть на весь экран (двойной клик)">⤢</button>
+                <button class="ps-del" title="Удалить этот файл">🗑</button><span class="ps-check">✓</span></div>
+                <div class="ps-cap"></div>`;
+            s.tiles.set(it.id, el);
+        }
+        if (it.head) {
+            let h = s.heads.get(it.id);
+            if (!h) { h = document.createElement('div'); h.className = 'ps-head'; s.heads.set(it.id, h); }
+            h.textContent = it.head;
+            const wantH = prev ? prev.nextSibling : grid.firstChild;
+            if (wantH !== h) grid.insertBefore(h, wantH);
+            prev = h;
+        }
+        const img = el.querySelector('img');
+        const src = cache.get(it.img);
+        if (src) { if (img.getAttribute('src') !== src) img.setAttribute('src', src); }
+        else missing.push(it.img);
+        el.style.display = '';  // may have been hidden by a quick delete that was undone
+        el.querySelector('.ps-cap').textContent = it.cap;
+        el.title = (it.cap + '\n' + (it.title || '')).trim();
+        const want = prev ? prev.nextSibling : grid.firstChild;
+        if (want !== el) grid.insertBefore(el, want);
+        prev = el;
+    }
+    s.order = ids;
+    s.items = new Map(data.items.map((it) => [it.id, it]));
+    paint(root);
+
+    // quick deletes (Ctrl+D) are resent until the file disappears from the list
+    const pending = (window.__psPending = window.__psPending || new Set());
+    for (const id of [...pending]) if (!present.has(id)) pending.delete(id);
+    for (const id of pending) { const el = s.tiles.get(id); if (el) el.style.display = 'none'; }
+
+    // after Ctrl+Z in the viewer: show the file that came back
+    const show = window.__psShow;
+    if (show && show.list === data.list && present.has(show.id)) {
+        window.__psShow = null;
+        openView(root, show.id);
+    }
+
+    // after deleting from the viewer: once the file is gone, continue with the next one
+    // (kept on window: the grid may be remounted by the rerun that follows the deletion)
+    const r = window.__psReopen;
+    if (r && r.list === data.list) {
+        if (Date.now() > r.until) window.__psReopen = null;
+        else if (!present.has(r.deleted)) {
+            window.__psReopen = null;
+            if (present.has(r.next)) openView(root, r.next);
+        }
+    }
+
+    // the browser lost some cached images (e.g. an interrupted run): ask Python to resend them
+    if (missing.length) setTriggerValue('need', missing);
+
+    // infinite scroll
+    if (root._obs) root._obs.disconnect();
+    if (data.has_more) {
+        let fired = false;
+        root._obs = new IntersectionObserver((entries) => {
+            if (!fired && entries.some((e) => e.isIntersecting)) {
+                fired = true;
+                setTriggerValue('more', ids.length);
+            }
+        }, { rootMargin: '1200px' });
+        root._obs.observe(root.querySelector('.ps-sentinel'));
+    }
+    return () => { if (root._obs) root._obs.disconnect(); };
+}
+
+function fire(root, name, ids) {
+    root._api.setTriggerValue('action', { name, ids, nonce: Date.now() });
+}
+
+// ---------------------------------------------------------------- full-screen viewer
+
+function fileUrl(root, id) {
+    const d = root._api.data;
+    return `${d.media}/file?id=${id}&t=${d.token}`;
+}
+
+function openView(root, id) {
+    const s = root._s;
+    const it = s.items.get(id);
+    if (!it || !root._api.data.media) return;
+    const v = root.querySelector('.ps-view');
+    const img = v.querySelector('.ps-vimg'), vid = v.querySelector('.ps-vvid');
+    s.viewing = id;
+    v.hidden = false;
+    if (it.kind === 'video') {
+        img.hidden = true;
+        vid.hidden = false;
+        vid.src = fileUrl(root, id);
+        vid.play().catch(() => {});
+    } else {
+        stopVideo(vid);
+        img.hidden = false;
+        img.src = (window.__psImg && window.__psImg.get(it.img)) || '';  // instant low-res placeholder
+        const full = new Image();
+        full.onload = () => { if (s.viewing === id) img.src = full.src; };
+        full.onerror = () => {
+            if (s.viewing === id) v.querySelector('.ps-vcap').textContent += ' · ⚠ оригинал недоступен (удалён или нет доступа к NAS)';
+        };
+        full.src = fileUrl(root, id);
+    }
+    vid.onerror = () => {
+        if (s.viewing === id) v.querySelector('.ps-vcap').textContent += ' · ⚠ браузер не может воспроизвести это видео';
+    };
+    const i = s.order.indexOf(id);
+    v.querySelector('.ps-vcap').textContent = `${i + 1} / ${root._api.data.total} · ` + it.cap.replace(/\n/g, ' · ');
+    for (const k of [1, -1]) {  // preload neighbours
+        const n = s.items.get(s.order[i + k]);
+        if (n && n.kind !== 'video') new Image().src = fileUrl(root, n.id);
+    }
+    if (i >= s.order.length - 3 && root._api.data.has_more) root._api.setTriggerValue('more', s.order.length);
+    s.sel = new Set([id]);
+    s.anchor = id;
+    paint(root);
+    const tile = s.tiles.get(id);
+    if (tile) tile.scrollIntoView({ block: 'nearest' });
+}
+
+function stopVideo(vid) {
+    vid.pause();
+    vid.removeAttribute('src');
+    vid.load();
+    vid.hidden = true;
+}
+
+function closeView(root) {
+    const v = root.querySelector('.ps-view');
+    v.hidden = true;
+    stopVideo(v.querySelector('.ps-vvid'));
+    root._s.viewing = null;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+
+function stepView(root, k) {
+    const s = root._s;
+    const next = s.order[s.order.indexOf(s.viewing) + k];
+    if (next !== undefined) openView(root, next);
+}
+
+function deleteViewed(root) {
+    const s = root._s;
+    const id = s.viewing;
+    if (id === null) return;
+    const i = s.order.indexOf(id);
+    const next = s.order[i + 1] !== undefined ? s.order[i + 1] : s.order[i - 1];
+    window.__psReopen = { list: root._api.data.list, deleted: id, next, until: Date.now() + 120000 };
+    closeView(root);
+    fire(root, 'delete', [id]);
+}
+
+// Ctrl+D: delete right away (no dialog) and move on; Ctrl+Z brings it back
+function quickDeleteViewed(root) {
+    const s = root._s;
+    const id = s.viewing;
+    if (id === null) return;
+    const i = s.order.indexOf(id);
+    const next = s.order[i + 1] !== undefined ? s.order[i + 1] : s.order[i - 1];
+    const pending = (window.__psPending = window.__psPending || new Set());
+    pending.add(id);
+    (window.__psUndoIds = window.__psUndoIds || []).push(id);
+    const tile = s.tiles.get(id);
+    if (tile) tile.style.display = 'none';
+    s.order = s.order.filter((x) => x !== id);  // until Python confirms, navigation skips it
+    if (next !== undefined) openView(root, next); else closeView(root);
+    fire(root, 'quick_delete', [...pending]);  // all pending: fast repeats must not get lost
+}
+
+function undoDelete(root) {
+    const id = (window.__psUndoIds || []).pop();
+    if (id !== undefined) {
+        if (window.__psPending) window.__psPending.delete(id);
+        if (root._s.viewing !== null) window.__psShow = { list: root._api.data.list, id };
+    }
+    fire(root, 'undo', []);
+}
+
+function toggleFullscreen(root) {
+    const v = root.querySelector('.ps-view');
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else v.requestFullscreen().catch(() => {});
+}
+
+function setupViewer(root) {
+    const v = root.querySelector('.ps-view');
+    v.addEventListener('click', (e) => { if (e.target === v) closeView(root); });
+    v.querySelector('.ps-vclose').onclick = () => closeView(root);
+    v.querySelector('.ps-vprev').onclick = () => stepView(root, -1);
+    v.querySelector('.ps-vnext').onclick = () => stepView(root, 1);
+    v.querySelector('.ps-vdel').onclick = () => deleteViewed(root);
+    v.querySelector('.ps-vfs').onclick = () => toggleFullscreen(root);
+}
+
+function hideWhileDialog(root) {
+    // a Streamlit dialog opens under the viewer (and the viewer lives in a shadow root): step aside until it closes
+    const v = root.querySelector('.ps-view');
+    let seen = false, waited = 0;
+    const t = setInterval(() => {
+        const open = !!document.querySelector('[role="dialog"]');
+        seen = seen || open;
+        waited += 100;
+        if (open) v.style.visibility = 'hidden';
+        else if (seen || waited > 10000) { v.style.visibility = ''; clearInterval(t); }
+    }, 100);
+}
+
+function paintViewerActions(root) {
+    // actions that make sense for the file on screen (e.g. "📥 to collection"): apply, then show the next file
+    const box = root.querySelector('.ps-vacts');
+    box.innerHTML = '';
+    for (const a of root._api.data.actions.filter((x) => x.viewer)) {
+        const b = document.createElement('button');
+        b.className = 'ps-vbtn';
+        b.textContent = a.viewer;
+        b.onclick = () => {
+            const s = root._s, id = s.viewing;
+            if (id === null) return;
+            if (!a.stay) stepView(root, 1);  // stay: the action asks about this very file (a dialog)
+            else {
+                hideWhileDialog(root);
+                // if the dialog makes the file leave this list (moved to a collection...), go on with the next one
+                const i = s.order.indexOf(id);
+                const next = s.order[i + 1] !== undefined ? s.order[i + 1] : s.order[i - 1];
+                window.__psReopen = { list: root._api.data.list, deleted: id, next, until: Date.now() + 120000 };
+            }
+            fire(root, a.name, [id]);
+        };
+        box.appendChild(b);
+    }
+}
+
+function paint(root) {
+    const s = root._s;
+    const data = root._api.data;
+    paintViewerActions(root);
+    for (const [id, el] of s.tiles) el.classList.toggle('sel', s.sel.has(id));
+    const n = s.sel.size;
+    root.querySelector('.ps-count').textContent =
+        `Загружено ${s.order.length} из ${data.total}` + (n ? ` · выбрано ${n}` : '');
+    const box = root.querySelector('.ps-actions');
+    box.innerHTML = '';
+    for (const a of data.actions) {
+        const b = document.createElement('button');
+        b.className = 'ps-btn' + (a.danger ? ' danger' : '');
+        b.textContent = n && a.label_sel ? a.label_sel.replace('{n}', n) : a.label;
+        b.disabled = (a.need_sel && !n) || (a.no_sel && n > 0 && !a.label_sel);
+        b.onclick = (e) => { e.stopPropagation(); fire(root, a.name, [...s.sel]); };
+        box.appendChild(b);
+    }
+}
+
+function setupEvents(root) {
+    const s = root._s;
+    const grid = root.querySelector('.ps-grid');
+    const band = root.querySelector('.ps-band');
+    const idOf = (el) => Number(el.dataset.id);
+
+    root.addEventListener('mouseenter', () => { s.hover = true; });
+    root.addEventListener('mouseleave', () => { s.hover = false; });
+
+    grid.addEventListener('dblclick', (e) => {
+        const tile = e.target.closest('.ps-tile');
+        if (tile && !e.target.closest('.ps-del')) openView(root, idOf(tile));
+    });
+
+    grid.addEventListener('click', (e) => {
+        if (s.justDragged) return;
+        const tile = e.target.closest('.ps-tile');
+        if (!tile) { if (!e.ctrlKey && !e.metaKey) { s.sel.clear(); paint(root); } return; }
+        const id = idOf(tile);
+        if (e.target.closest('.ps-del')) { fire(root, 'delete', [id]); return; }
+        if (e.target.closest('.ps-open')) { openView(root, id); return; }
+        if (e.shiftKey && s.anchor !== null) {
+            const a = s.order.indexOf(s.anchor), b = s.order.indexOf(id);
+            if (!(e.ctrlKey || e.metaKey)) s.sel.clear();
+            for (let i = Math.min(a, b); i <= Math.max(a, b); i++) s.sel.add(s.order[i]);
+        } else if (e.ctrlKey || e.metaKey) {
+            s.sel.has(id) ? s.sel.delete(id) : s.sel.add(id);
+            s.anchor = id;
+        } else {
+            s.sel.clear(); s.sel.add(id); s.anchor = id;
+        }
+        root.focus({ preventScroll: true });
+        paint(root);
+    });
+
+    // nearest scrollable ancestor (crosses the shadow root boundary)
+    const scroller = () => {
+        let el = root.getRootNode().host;
+        while (el && el !== document.body) {
+            const oy = getComputedStyle(el).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return el;
+            el = el.parentElement || (el.getRootNode() && el.getRootNode().host);
+        }
+        return document.scrollingElement;
+    };
+    const NO_START = 'input, textarea, select, button, a, label, [role="button"], [role="option"], [role="listbox"], ' +
+                     '[role="dialog"], [role="slider"], [contenteditable="true"], [data-testid="stSidebar"]';
+
+    // rubber band selection: may start anywhere in empty space of the main area, survives scrolling
+    const onDown = (e) => {
+        if (!root.isConnected) { document.removeEventListener('mousedown', onDown); return; }
+        if (e.button !== 0) return;
+        const path = e.composedPath().filter((n) => n instanceof Element);
+        if (root._s.viewing !== null) return;
+        if (path.some((n) => ['ps-del', 'ps-open', 'ps-bar', 'ps-view'].some((c) => n.classList.contains(c)))) return;
+        const inGrid = path.includes(grid);
+        if (!inGrid) {
+            if (path.some((n) => n.matches(NO_START))) return;
+            if (!path.some((n) => n.matches('[data-testid="stMain"], [data-testid="stAppViewContainer"]'))) return;
+            e.preventDefault();  // no text selection while dragging over the page
+        }
+        const g0 = grid.getBoundingClientRect();
+        const ax = e.clientX - g0.left, ay = e.clientY - g0.top;  // anchor relative to the grid: stable on scroll
+        const base = (e.ctrlKey || e.metaKey) ? new Set(s.sel) : new Set();
+        const sc = scroller();
+        let mx = e.clientX, my = e.clientY, dragging = false, raf = 0;
+
+        const update = () => {
+            const g = grid.getBoundingClientRect();
+            const x0 = g.left + ax, y0 = g.top + ay;
+            if (!dragging && Math.hypot(mx - x0, my - y0) < 6) return;
+            dragging = true;
+            const l = Math.min(x0, mx), t = Math.min(y0, my), r = Math.max(x0, mx), b = Math.max(y0, my);
+            Object.assign(band.style, { display: 'block', left: l + 'px', top: t + 'px',
+                                        width: (r - l) + 'px', height: (b - t) + 'px' });
+            s.sel = new Set(base);
+            for (const [id, el] of s.tiles) {
+                const q = el.getBoundingClientRect();
+                if (q.right > l && q.left < r && q.bottom > t && q.top < b) s.sel.add(id);
+            }
+            paint(root);
+        };
+        // auto-scroll while the pointer is near the top/bottom edge of the window
+        const tick = () => {
+            const edge = 60, h = window.innerHeight;
+            const dy = my < edge ? -(edge - my) : my > h - edge ? (my - (h - edge)) : 0;
+            if (dragging && dy) { sc.scrollBy(0, dy * 0.5); update(); }
+            raf = requestAnimationFrame(tick);
+        };
+        const move = (ev) => { mx = ev.clientX; my = ev.clientY; update(); };
+        const onScroll = () => update();
+        const up = () => {
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', up);
+            document.removeEventListener('scroll', onScroll, true);
+            cancelAnimationFrame(raf);
+            band.style.display = 'none';
+            if (dragging) {
+                s.justDragged = true;  // swallow the click that follows this mouseup
+                setTimeout(() => { s.justDragged = false; }, 0);
+            } else if (!inGrid && !(e.ctrlKey || e.metaKey) && s.sel.size) {
+                s.sel.clear();  // plain click on empty space clears the selection, like Explorer
+                paint(root);
+            }
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+        document.addEventListener('scroll', onScroll, true);
+        raf = requestAnimationFrame(tick);
+    };
+    document.addEventListener('mousedown', onDown);
+
+    const onKey = (e) => {
+        if (!root.isConnected) { document.removeEventListener('keydown', onKey); return; }
+        const t = e.composedPath()[0];
+        // typing in a text field is not for us; a focused switch/checkbox (just clicked) is
+        if (t && ((t.tagName === 'INPUT' && !['checkbox', 'radio'].includes(t.type))
+                  || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (document.querySelector('[role="dialog"]')) return;
+        const ctrl = e.ctrlKey || e.metaKey;  // e.code: physical key, works on any keyboard layout
+        if (s.viewing !== null) {  // full-screen viewer has the keyboard
+            let fn = null;
+            if (ctrl && e.code === 'KeyD') fn = () => quickDeleteViewed(root);
+            else if (ctrl && e.code === 'KeyZ') fn = () => undoDelete(root);
+            else if (!ctrl) fn = { Escape: () => closeView(root), ArrowRight: () => stepView(root, 1),
+                                   ArrowLeft: () => stepView(root, -1), Delete: () => deleteViewed(root),
+                                   KeyF: () => toggleFullscreen(root) }[e.code === 'KeyF' ? 'KeyF' : e.key];
+            if (fn) { e.preventDefault(); fn(); }
+            return;
+        }
+        if (ctrl && e.code === 'KeyZ' && (s.hover || root.matches(':focus-within') || window.__psUndoIds?.length)) {
+            e.preventDefault(); undoDelete(root); return;
+        }
+        if (!s.hover && !root.matches(':focus-within')) return;
+        if ((e.key === 'Enter' || e.key === ' ') && s.sel.size) {
+            e.preventDefault();
+            openView(root, s.sel.has(s.anchor) ? s.anchor : [...s.sel][0]);
+        } else if (ctrl && e.code === 'KeyA') {
+            e.preventDefault(); s.sel = new Set(s.order); paint(root);
+        } else if (e.key === 'Escape') {
+            s.sel.clear(); paint(root);
+        } else if (e.key === 'Delete' && s.sel.size) {
+            e.preventDefault(); fire(root, 'delete', [...s.sel]);
+        }
+    };
+    document.addEventListener('keydown', onKey);
+}
+"""
+
+_CSS = r"""
+.ps-root { outline: none; }
+.ps-bar {
+    position: sticky; top: var(--ps-top, 0px); z-index: 5; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 8px 0; background: var(--st-background-color, #fff);
+    font-size: 14px; color: var(--st-text-color, #31333f);
+    box-shadow: 0 6px 8px -8px rgba(0, 0, 0, .35);
+}
+.ps-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ps-hint { font-size: 12px; opacity: .6; }
+.ps-btn {
+    font: inherit; font-size: 14px; padding: 4px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--st-border-color, rgba(49, 51, 63, .2));
+    background: var(--st-secondary-background-color, #f0f2f6); color: inherit;
+}
+.ps-btn.danger { background: var(--st-primary-color, #ff4b4b); border-color: transparent; color: #fff; }
+.ps-btn:disabled { opacity: .4; cursor: default; }
+.ps-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px;
+    user-select: none; min-height: 40px;
+}
+.ps-head {
+    grid-column: 1 / -1; margin-top: 10px; padding: 4px 2px; font-size: 14px; font-weight: 600;
+    border-bottom: 1px solid var(--st-border-color, rgba(128, 128, 128, .3));
+}
+.ps-tile {
+    border: 2px solid transparent; border-radius: 10px; padding: 4px; cursor: pointer;
+    background: var(--st-secondary-background-color, #f0f2f6);
+}
+.ps-tile:hover { border-color: rgba(128, 128, 128, .4); }
+.ps-tile.sel {
+    border-color: var(--st-primary-color, #ff4b4b);
+    background: color-mix(in srgb, var(--st-primary-color, #ff4b4b) 14%, transparent);
+}
+.ps-img { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 7px; background: #0002; }
+.ps-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ps-del {
+    position: absolute; top: 4px; right: 4px; display: none; border: none; border-radius: 6px;
+    background: rgba(0, 0, 0, .6); color: #fff; font-size: 15px; padding: 2px 6px; cursor: pointer;
+}
+.ps-del:hover { background: var(--st-primary-color, #ff4b4b); }
+.ps-tile:hover .ps-del { display: block; }
+.ps-open {
+    position: absolute; bottom: 4px; right: 4px; display: none; border: none; border-radius: 6px;
+    background: rgba(0, 0, 0, .6); color: #fff; font-size: 15px; padding: 2px 7px; cursor: pointer;
+}
+.ps-open:hover { background: rgba(0, 0, 0, .85); }
+.ps-tile:hover .ps-open { display: block; }
+
+/* full-screen viewer */
+.ps-view {
+    position: fixed; inset: 0; z-index: 2147483000; background: rgba(0, 0, 0, .94);
+    display: flex; align-items: center; justify-content: center;
+}
+.ps-view[hidden], .ps-vimg[hidden], .ps-vvid[hidden] { display: none; }
+.ps-vimg, .ps-vvid { width: 100vw; height: 100vh; object-fit: contain; }  /* fit the screen, small ones too */
+.ps-vtop {
+    position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; gap: 12px;
+    align-items: center; padding: 10px 14px; color: #fff; font-size: 14px;
+    background: linear-gradient(rgba(0, 0, 0, .7), transparent);
+}
+.ps-vcap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
+.ps-vbtns, .ps-vacts { display: flex; gap: 8px; flex-shrink: 0; }
+.ps-vhint { font-size: 12px; opacity: .6; white-space: nowrap; margin-left: auto; }
+.ps-vbtn {
+    border: none; border-radius: 8px; padding: 6px 12px; font-size: 15px; cursor: pointer;
+    background: rgba(255, 255, 255, .16); color: #fff;
+}
+.ps-vbtn:hover { background: rgba(255, 255, 255, .3); }
+.ps-vbtn.danger:hover { background: var(--st-primary-color, #ff4b4b); }
+.ps-vnav {
+    position: absolute; top: 50%; transform: translateY(-50%); width: 56px; height: 96px; border: none;
+    border-radius: 10px; font-size: 48px; line-height: 1; color: #fff; background: rgba(0, 0, 0, .3); cursor: pointer;
+}
+.ps-vnav:hover { background: rgba(0, 0, 0, .6); }
+.ps-vprev { left: 12px; }
+.ps-vnext { right: 12px; }
+.ps-check {
+    position: absolute; top: 4px; left: 4px; display: none; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--st-primary-color, #ff4b4b); color: #fff; font-size: 14px; line-height: 22px; text-align: center;
+}
+.ps-tile.sel .ps-check { display: block; }
+/* fixed caption height -> every card has exactly the same size; full text is in the tooltip */
+.ps-cap {
+    font-size: 12px; line-height: 1.35; white-space: pre-line; overflow-wrap: anywhere; padding: 4px 2px 0;
+    color: var(--st-text-color, #31333f); opacity: .85;
+    height: calc(4 * 1.35em); overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+}
+.ps-sentinel { height: 1px; }
+.ps-band {
+    position: fixed; display: none; pointer-events: none; z-index: 1000;
+    border: 1px solid var(--st-primary-color, #ff4b4b);
+    background: color-mix(in srgb, var(--st-primary-color, #ff4b4b) 15%, transparent);
+}
+"""
+
+_grid = st.components.v2.component("photo_grid", js=_JS, css=_CSS)
+
+
+def photo_grid(list_id, items, total, has_more, actions, on_more, media=None):
+    """Render the grid; returns the action the user just triggered ({"name", "ids"}) or None.
+
+    items:   [{"id": int, "kind": "image"|"video", "img": cache key, "cap": str, "title": str,
+               "get_img": () -> jpeg bytes, "head": optional group header shown before the item}]
+    actions: [{"name", "label", "label_sel" (with {n}), "need_sel", "danger"}]
+    media:   (base_url, token) of media_server for the full-screen viewer
+    """
+    sent = st.session_state.setdefault("_grid_sent", set())
+    out = []
+    for it in items:
+        d = {"id": it["id"], "kind": it.get("kind", "image"), "img": it["img"], "cap": it["cap"],
+             "title": it.get("title", "")}
+        if it.get("head"):
+            d["head"] = it["head"]
+        if it["img"] not in sent:
+            jpeg = it["get_img"]()
+            if jpeg:
+                d["src"] = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
+                sent.add(it["img"])
+        out.append(d)
+    res = _grid(key=f"grid{list_id}",
+                data={"list": list_id, "items": out, "total": total, "has_more": has_more, "actions": actions,
+                      "media": media[0] if media else None, "token": media[1] if media else None},
+                on_action_change=lambda: None, on_more_change=on_more, on_need_change=lambda: None)
+    if res.need:
+        sent.difference_update(res.need)
+        st.rerun()
+    return res.action

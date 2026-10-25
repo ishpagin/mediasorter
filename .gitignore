@@ -1,0 +1,8 @@
+models/
+__pycache__/
+*.log
+*.db
+*.db-*
+data/
+logs/
+.venv/

@@ -1,0 +1,5 @@
+# Folders photosorter must never delete from (apply / UI delete button are blocked), one per line.
+# Windows paths are mapped to the server mounts by PS_PATH_MAP (see docker-compose.yml); Linux paths work too.
+# Deleted NAS files are moved to <share root>/_photosorter_deleted (undo: Ctrl+Z or photosorter.py restore).
+# Example:
+# \nas\home\Photos\do-not-touch

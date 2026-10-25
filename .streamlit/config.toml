@@ -1,0 +1,9 @@
+# Server copy: listens on all interfaces inside the container; docker publishes it to the home LAN only.
+# Private photos: never forward this port on the router.
+[server]
+address = "0.0.0.0"
+port = 8501
+headless = true
+
+[browser]
+gatherUsageStats = false

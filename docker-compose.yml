@@ -1,0 +1,45 @@
+# photosorter: face/scene sorting of the photo archive. Code is ./app (mounted, not baked in), DB in ./data.
+services:
+  photosorter:
+    build: .
+    image: photosorter:local
+    container_name: photosorter
+    restart: unless-stopped
+    user: "1000:1000"
+    mem_limit: 16g
+    environment:
+      HOME: /data/home
+      PS_DB: /data/faces.db
+      # Windows paths of the old DB -> NAS mount (NAS share "homes" mounted at /mnt/nas-homes)
+      PS_PATH_MAP: //nas/home/=/mnt/nas-homes/user/;//nas/homes/=/mnt/nas-homes/
+      PS_SCAN_SRC: /mnt/nas-homes/user/Photos /mnt/nas-homes/user2/Photos
+      PS_GPU_MEM_MB: "3072"  # cap per ONNX session (up to 4 per process): the GPU may be shared with other services
+      PS_MEDIA_BIND: 0.0.0.0:8502
+      PS_MEDIA_URL: http://192.168.1.10:8502
+      # work queue for remote GPU workers (queue_api.py, port 8503; token in data/queue_token)
+      PS_QUEUE_WAIT: "10"            # min: scan leaves the queue to an active worker, then helps
+      PS_QUEUE_LEASE: "90"           # s: batch lease, renewed by the worker's heartbeat
+      PS_QUEUE_AUTOSCAN_MIN: "120"   # empty queue + waiting worker -> nightly.sh, at most this often (0 = never)
+    ports:  # home LAN address only
+      - "192.168.1.10:8501:8501"
+      - "192.168.1.10:8502:8502"
+      - "192.168.1.10:8503:8503"
+    volumes:
+      - ./app:/app
+      - ./data:/data
+      - /etc/localtime:/etc/localtime:ro  # local time in logs and DB timestamps, as on Windows
+      - type: bind
+        source: /mnt/nas-homes
+        target: /mnt/nas-homes
+        bind:
+          propagation: rslave
+          create_host_path: true
+    # queue API next to the UI, restarted if it dies
+    command: ["sh", "-c", "while :; do python queue_api.py; sleep 5; done & exec streamlit run app.py"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
