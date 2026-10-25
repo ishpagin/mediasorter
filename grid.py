@@ -458,7 +458,7 @@ function setupEvents(root) {
     document.addEventListener('mousedown', onDown);
 
     const onKey = (e) => {
-        if (!root.isConnected) { document.removeEventListener('keydown', onKey); return; }
+        if (!root.isConnected) { document.removeEventListener('keydown', onKey); window.__psRoots.delete(root); return; }
         const t = e.composedPath()[0];
         // typing in a text field is not for us; a focused switch/checkbox (just clicked) is
         if (t && ((t.tagName === 'INPUT' && !['checkbox', 'radio'].includes(t.type))
@@ -475,8 +475,11 @@ function setupEvents(root) {
             if (fn) { e.preventDefault(); fn(); }
             return;
         }
-        if (ctrl && e.code === 'KeyZ' && (s.hover || root.matches(':focus-within') || window.__psUndoIds?.length)) {
-            e.preventDefault(); undoDelete(root); return;
+        if (ctrl && e.code === 'KeyZ') {  // anywhere on the page; one grid answers: the hovered / focused one, else the first
+            const live = [...window.__psRoots].filter((r) => r.isConnected);
+            const owner = live.find((r) => r._s.hover || r.matches(':focus-within')) || live[0];
+            if (owner === root) { e.preventDefault(); undoDelete(root); }
+            return;
         }
         if (!s.hover && !root.matches(':focus-within')) return;
         if ((e.key === 'Enter' || e.key === ' ') && s.sel.size) {
@@ -490,6 +493,7 @@ function setupEvents(root) {
             e.preventDefault(); fire(root, 'delete', [...s.sel]);
         }
     };
+    (window.__psRoots ||= new Set()).add(root);
     document.addEventListener('keydown', onKey);
 }
 """

@@ -1335,6 +1335,10 @@ with st.sidebar:
     with c2.popover(":material/add:", help="Новая подборка"):
         st.text_input("Название", placeholder="Для мамы, Саше с моря...", key="new_coll_name")
         st.button("Создать", on_click=_create_collection)
+    if state.get("undo") and st.button(":material/undo: Отменить последнее (Ctrl+Z)", width="stretch",
+                                       help="Вернуть последнее удаление, раскладку по подборкам или правку лиц"):
+        undo_last()
+        st.rerun()
     if st.button("Пересчитать кластеры", help="Имена и слияния сохраняются"):
         with st.spinner("Кластеризация..."):
             ps.cmd_cluster(ps.build_parser().parse_args(["--db", DB, "cluster"]))
