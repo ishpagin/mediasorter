@@ -11,4 +11,4 @@ volumes:
     driver_opts:
       type: cifs
       device: ${NAS_SHARE}
-      o: username=${NAS_USER},password=${NAS_PASSWORD},vers=3.0,iocharset=utf8,uid=0,gid=0
+      o: username=${NAS_USER},password=${NAS_PASSWORD},vers=3.0,iocharset=utf8,uid=${PUID:-0},gid=${PGID:-0}

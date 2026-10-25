@@ -56,6 +56,9 @@ if command -v nvidia-smi >/dev/null && docker info 2>/dev/null | grep -qi nvidia
 fi
 grep -q '^NAS_SHARE=..*' .env && FILES="$FILES -f docker-compose.nas.yml"
 
+# run as you (not root), so you can delete data/ and collections/ yourself; create them before docker would (as root)
+export PUID="$(id -u)" PGID="$(id -g)"
+mkdir -p data/home/Pictures/Photosorter collections  # the nested mount point too, or docker makes it root-owned
 echo "Building and starting. The first time takes 10-30 minutes (it downloads ~5 GB)."
 # shellcheck disable=SC2086
 docker compose $FILES up -d --build || exit 1
