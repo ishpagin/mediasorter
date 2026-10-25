@@ -460,10 +460,11 @@ def file_grid(key, rows, extra_actions=(), videos=None, collect=True, person=Non
             notes.append(f":material/movie: Скрыто видео: {n_hidden} — они в разделе «Видео» или включи «Показывать и видео» слева.")
     hide_collected = collect and state.get("hide_collected", True)
     if hide_collected:
-        n_coll = sum(r["id"] in IN_COLLECTION for r in rows)
-        rows = [r for r in rows if r["id"] not in IN_COLLECTION]
+        n_coll = sum(r["id"] in MOVED_TO_COLLECTION for r in rows)
+        rows = [r for r in rows if r["id"] not in MOVED_TO_COLLECTION]
         if n_coll:
-            notes.append(f":material/collections_bookmark: Скрыто уже в подборках: {n_coll} — выключи «Скрывать то, что в подборках» слева.")
+            notes.append(f":material/collections_bookmark: Скрыто перемещённых в подборки: {n_coll} — "
+                         "выключи «Скрывать перемещённое в подборки» слева.")
     if notes:
         note_slot.caption("  \n".join(notes))
     if not rows and state.get("undo"):  # nothing left to hover for Ctrl+Z (e.g. everything was just deleted)
@@ -539,6 +540,12 @@ def in_collection():
     """{file_id: "name1, name2"} for files currently in collections."""
     return dict(con.execute("SELECT c.file_id, group_concat(k.name, ', ') FROM collection_files c "
                             "JOIN collections k ON k.id = c.collection_id GROUP BY c.file_id"))
+
+
+def moved_to_collection():
+    """File ids that were moved out of the archive into a collection (copies stay in the archive: not here)."""
+    return {fid for (fid,) in con.execute("SELECT f.id FROM files f JOIN collection_files c "
+                                          "ON c.file_id = f.id AND c.link_path = f.path")}
 
 
 def current_collection_name():
@@ -1290,6 +1297,7 @@ if state.get("_page") != nav.url_path:  # another screen: flip the animation nam
 st.html(f'<style>[data-testid="stMainBlockContainer"] {{ animation: lt-enter-{state.get("_enter", 0)} '
         f'320ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }}</style>')  # backwards: no transform left after it ends, or position:fixed (the viewer) would be trapped inside
 IN_COLLECTION = in_collection()
+MOVED_TO_COLLECTION = moved_to_collection()
 PEOPLE_IN = people_in()
 
 with st.sidebar:
@@ -1301,9 +1309,9 @@ with st.sidebar:
                    "Видео отдельно — в разделе «Видео».")
     if "hide_collected" not in state:
         state.hide_collected = True
-    st.toggle("Скрывать то, что в подборках", key="hide_collected",
-              help="Фото, уже разложенные по подборкам, не показываются в списках. "
-                   "Их видно на странице «Подборки».")
+    st.toggle("Скрывать перемещённое в подборки", key="hide_collected",
+              help="Фото, перемещённые из архива в подборки, не показываются в списках, их видно на странице "
+                   "«Подборки». Скопированные остаются на месте, у них в подписи название подборки.")
 
     # current collection: where ":material/collections_bookmark:" moves the selected files
     colls = dict(con.execute("SELECT id, name FROM collections ORDER BY created_at DESC"))

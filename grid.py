@@ -109,7 +109,8 @@ export default function(component) {
         if (src) { if (img.getAttribute('src') !== src) img.setAttribute('src', src); }
         else missing.push(it.img);
         el.style.display = '';  // may have been hidden by a quick delete that was undone
-        el.querySelector('.ps-cap').innerHTML = rich(it.cap);
+        el.querySelector('.ps-cap').innerHTML = it.cap.split('\n').filter(Boolean)
+            .map((l) => `<div class="ps-line">${rich(l)}</div>`).join('');  // one line each, full text in the tooltip
         el.title = plain(it.cap + '\n' + (it.title || '')).trim();
         const want = prev ? prev.nextSibling : grid.firstChild;
         if (want !== el) grid.insertBefore(el, want);
@@ -560,12 +561,13 @@ _CSS = r"""
     box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
 }
 .ps-tile.sel .ps-check { display: block; }
-/* fixed caption height -> every mount has exactly the same size; full text is in the tooltip */
+/* fixed caption height (up to 5 lines: who, collection, file, date and place, extra) -> every mount has the same
+   size; each line stays on one line and ends with an ellipsis, the full text is in the tooltip */
 .ps-cap {
-    font-size: 12px; line-height: 16px; white-space: pre-line; overflow-wrap: anywhere; padding: 6px 2px 0;
-    color: var(--lt-soft); height: calc(4 * 16px + 6px); overflow: hidden;
-    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+    box-sizing: content-box; font-size: 12px; line-height: 16px; padding: 6px 2px 0;
+    color: var(--lt-soft); height: calc(5 * 16px); overflow: hidden;
 }
+.ps-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* full-screen viewer: the photo alone on black, controls on a graphite strip */
 .ps-view {
