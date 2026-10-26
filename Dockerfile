@@ -28,7 +28,8 @@ RUN curl -sSLf --retry 5 -o b.zip https://github.com/deepinsight/insightface/rel
  && for f in config.json visual/model.onnx visual/preprocess_cfg.json textual/model.onnx textual/tokenizer.json \
              textual/tokenizer_config.json textual/special_tokens_map.json; do \
       curl -sSLf --retry 5 --create-dirs -o "siglip2/$f" "https://huggingface.co/immich-app/ViT-B-16-SigLIP2__webli/resolve/main/$f"; \
-    done
+    done \
+ && chmod -R a+rX /models  # readable when the container runs as a normal user (PUID)
 
 # 4. what runs
 FROM ${BASE}
