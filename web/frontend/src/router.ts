@@ -8,6 +8,7 @@ import SearchPage from './pages/SearchPage.vue'
 import StacksPage from './pages/StacksPage.vue'
 import CopiesPage from './pages/CopiesPage.vue'
 import CollectionsPage from './pages/CollectionsPage.vue'
+import ConnectPage from './pages/ConnectPage.vue'
 
 // same addresses as the old UI, so bookmarks keep working; filters live in the query string
 export const router = createRouter({
@@ -26,6 +27,7 @@ export const router = createRouter({
     { path: '/stacks', component: StacksPage },
     { path: '/copies', component: CopiesPage },
     { path: '/collections', component: CollectionsPage },
+    { path: '/connect', component: ConnectPage, meta: { bare: true } }, // desktop app: where to sort
     { path: '/:rest(.*)*', redirect: '/files' },
   ],
 })

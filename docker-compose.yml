@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     user: "${PUID:-0}:${PGID:-0}"  # start.sh sets your user on Linux/macOS, so data/ is yours, not root's
     environment:
-      SCAN_EVERY_HOURS: ${SCAN_EVERY_HOURS:-24}
+      MS_SCAN_HOUR: ${SCAN_HOUR:-3}  # new photos are picked up every night at this hour (and at start when due)
     ports:  # this computer only (photos are private): see README to open it to the home network
       - "127.0.0.1:${PORT:-8501}:8501"
     volumes:

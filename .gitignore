@@ -8,3 +8,4 @@ collections/
 photos/
 .env
 .venv/
+/dist/

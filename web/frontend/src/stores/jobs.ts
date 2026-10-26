@@ -5,10 +5,11 @@ import { api, type Job } from '@/api'
 import { useActions } from './actions'
 
 const LABELS: Record<string, string> = {
-  cluster: 'Пересчёт кластеров', stacks_build: 'Сборка стопок', stacks_score: 'Оценка качества',
+  scan: 'Разбор фото', cluster: 'Пересчёт кластеров', tag: 'Сюжеты', stacks_build: 'Сборка стопок',
+  stacks_score: 'Оценка качества',
 }
 
-// the long job running on the Python side (one at a time): start, follow the progress, refresh lists at the end
+// the long job of the analysis (one at a time): start, follow the progress, refresh lists at the end
 export const useJobs = defineStore('jobs', () => {
   const job = ref<Job | null>(null)
   const actions = useActions()
@@ -42,7 +43,7 @@ export const useJobs = defineStore('jobs', () => {
     try {
       job.value = await api.job()
       if (job.value.running && !timer) timer = setTimeout(poll, 1500)
-    } catch { /* the Python side may be restarting */ }
+    } catch { /* the analysis side may be restarting */ }
   }
 
   const label = (name: string | null) => LABELS[name ?? ''] ?? 'Задача'

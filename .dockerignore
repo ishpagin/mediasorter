@@ -11,3 +11,6 @@ __pycache__
 web/frontend/node_modules
 web/frontend/dist
 web/mediasorter-web
+dist
+desktop
+.github

@@ -1,0 +1,101 @@
+# Desktop app for Windows, macOS (Apple Silicon) and Linux. A tag v* publishes a release with all three;
+# a manual run (Actions > desktop > Run workflow) only keeps the builds as artifacts.
+name: desktop
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+      - run: npm ci --no-fund --no-audit && npm run build
+        working-directory: web/frontend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui
+          path: web/frontend/dist
+
+  windows:
+    needs: ui
+    runs-on: ubuntu-24.04  # cross-compiled with mingw-w64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui
+          path: web/frontend/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: web/go.mod
+          cache-dependency-path: web/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 zip unzip
+      - run: go install github.com/tc-hib/go-winres@latest
+      - run: VERSION=${GITHUB_REF_NAME#v} sh desktop/build-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/Mediasorter-windows-x64.zip
+
+  linux:
+    needs: ui
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui
+          path: web/frontend/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: web/go.mod
+          cache-dependency-path: web/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev
+      - run: sh desktop/build-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/Mediasorter-linux-x64.tar.gz
+
+  macos:
+    needs: ui
+    runs-on: macos-14  # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui
+          path: web/frontend/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: web/go.mod
+          cache-dependency-path: web/go.sum
+      - run: VERSION=${GITHUB_REF_NAME#v} sh desktop/build-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/Mediasorter-macos-arm64.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "Mediasorter $GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

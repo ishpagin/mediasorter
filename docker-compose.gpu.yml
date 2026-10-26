@@ -2,6 +2,11 @@
 # Linux also needs nvidia-container-toolkit; Windows: Docker Desktop with WSL 2 is enough.
 services:
   mediasorter:
+    build:
+      args:  # the CUDA build of ONNX Runtime on NVIDIA's CUDA + cuDNN runtime image
+        BASE: nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+        ORT: onnxruntime-linux-x64-gpu-1.24.4
+    image: mediasorter-gpu
     deploy:
       resources:
         reservations:

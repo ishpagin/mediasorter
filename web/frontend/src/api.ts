@@ -99,6 +99,25 @@ async function post<T>(url: string, body: unknown = {}, method = 'POST'): Promis
   return r.json() as Promise<T>
 }
 
+// the desktop app's own endpoints (absent on a server: 404)
+export interface DesktopState {
+  mode: '' | 'local' | 'remote'
+  server: string
+  recent: string[] | null
+  sources: string[]
+  files: number
+  lastScan: string
+  setup: { running: boolean; message: string; progress: number; error: string; ready: boolean }
+  dataDir: string
+}
+
+export const desktop = {
+  state: () => get<DesktopState>('/api/desktop/state'),
+  pick: () => post<{ path: string }>('/api/desktop/pick'),
+  local: (sources: string[]) => post<{ ok: boolean }>('/api/desktop/local', { sources }),
+  remote: (server: string) => post<{ url: string }>('/api/desktop/remote', { server }),
+}
+
 export const api = {
   meta: () => get<Meta>('/api/meta'),
   files: (params: Record<string, string>, signal?: AbortSignal) =>

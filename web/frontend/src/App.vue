@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
-  Bookmark, Copy, Image, Images, Layers, Link, Moon, Plus, RefreshCw, Search, Sun, Undo2, UserMinus, UserPlus, Users, Video,
+  Bookmark, Copy, FolderSync, Image, Images, Layers, Link, Moon, Plug, Plus, RefreshCw, Search, Sun, Undo2, UserMinus,
+  UserPlus, Users, Video,
 } from '@lucide/vue'
+import { useRoute } from 'vue-router'
+import { desktop } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -19,6 +22,8 @@ import JobBar from '@/components/JobBar.vue'
 const settings = useSettings()
 const actions = useActions()
 const jobs = useJobs()
+const route = useRoute()
+const isDesktop = ref(false) // the desktop app (local mode) has its own settings page
 const meta = computed(() => actions.meta)
 const newName = ref('')
 const newOpen = ref(false)
@@ -78,12 +83,14 @@ onMounted(() => {
   void actions.loadMeta()
   void actions.refreshUndo()
   void jobs.check()
+  desktop.state().then(() => { isDesktop.value = true }, () => {})
 })
 </script>
 
 <template>
   <TooltipProvider :delay-duration="400">
-    <div class="grid h-full grid-cols-[248px_1fr]">
+    <RouterView v-if="route.meta.bare" />
+    <div v-else class="grid h-full grid-cols-[248px_1fr]">
       <aside class="flex flex-col gap-4 overflow-y-auto border-r bg-sidebar px-3 py-4 text-sidebar-foreground">
         <RouterLink to="/files" class="flex items-center gap-2.5 px-2 py-1 text-[17px] font-semibold">
           <img src="/mark.svg" alt="" width="28" height="28" />
@@ -137,8 +144,15 @@ onMounted(() => {
           </div>
           <JobBar />
           <Button variant="ghost" size="sm" class="justify-start" :disabled="!!jobs.job?.running"
+                  title="Найти новые и изменённые файлы, разобрать их, обновить людей, сюжеты и стопки" @click="jobs.start('scan')">
+            <FolderSync />Обновить архив
+          </Button>
+          <Button variant="ghost" size="sm" class="justify-start" :disabled="!!jobs.job?.running"
                   title="Имена, объединения и ручные исправления сохраняются" @click="jobs.start('cluster')">
             <RefreshCw />Пересчитать кластеры
+          </Button>
+          <Button v-if="isDesktop" as-child variant="ghost" size="sm" class="justify-start">
+            <RouterLink to="/connect"><Plug />Папки и подключение</RouterLink>
           </Button>
           <label class="flex cursor-pointer items-center gap-2.5">
             <Switch v-model="settings.showVideo" />Показывать и видео

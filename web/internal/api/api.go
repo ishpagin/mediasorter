@@ -15,11 +15,18 @@ import (
 	"github.com/ishpagin/mediasorter/web/internal/ml"
 )
 
+// ML: the analysis side (the Go engine in-process, or the Python service).
+type ML interface {
+	EmbedText(text string) ([]float32, error)
+	Convert(path string) ([]byte, error)
+	StartJob(name string) (ml.Job, error)
+}
+
 type Server struct {
 	DB  *sql.DB
 	Cfg *core.Config
 
-	ML *ml.Client
+	ML ML
 
 	similarCache atomic.Value // *centroidCache: mean faces of people, recomputed when faces change
 	simMu        sync.Mutex
