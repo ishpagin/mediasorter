@@ -82,6 +82,18 @@ jobs:
           go-version-file: web/go.mod
           cache-dependency-path: web/go.sum
       - run: VERSION=${GITHUB_REF_NAME#v} sh desktop/build-macos.sh
+      - name: CoreML gives the same faces and scenes as the CPU (and how much faster)
+        continue-on-error: true  # the runner is a VM: CoreML speed there says little about a real Mac
+        run: |
+          mkdir -p /tmp/m/siglip2/visual && cd /tmp/m
+          curl -sSLf -o b.zip https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
+          unzip -jq b.zip "*det_10g.onnx" "*w600k_r50.onnx"
+          curl -sSLf -o siglip2/visual/model.onnx https://huggingface.co/immich-app/ViT-B-16-SigLIP2__webli/resolve/main/visual/model.onnx
+          curl -sSLf -o /tmp/t1.jpg https://raw.githubusercontent.com/deepinsight/insightface/master/python-package/insightface/data/images/t1.jpg
+          cd "$GITHUB_WORKSPACE/web"
+          MS_MODELS=/tmp/m MS_TEST_IMAGE=/tmp/t1.jpg MS_EXPECT_GPU=1 \
+            MS_ORT="$GITHUB_WORKSPACE/dist/Mediasorter.app/Contents/Frameworks/libonnxruntime.dylib" \
+            go test -count=1 -v -run TestGPU ./internal/vision
       - uses: actions/upload-artifact@v4
         with:
           name: macos

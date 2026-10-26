@@ -22,6 +22,7 @@ var (
 func Init(lib string) error {
 	initOnce.Do(func() {
 		if lib != "" {
+			preload(lib)
 			ort.SetSharedLibraryPath(lib)
 		}
 		initErr = ort.InitializeEnvironment()

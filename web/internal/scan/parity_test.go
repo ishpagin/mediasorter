@@ -156,9 +156,9 @@ func TestParityAnalyze(t *testing.T) {
 			}
 		}
 		raw := media.RawExt[strings.ToLower(filepath.Ext(r.Path))]
-		if !raw && s(m.TakenAt) != s(w.TakenAt) || s(m.DateSource) != s(w.DateSource) || f(m.Lat) != f(w.Lat) ||
+		if !raw && (s(m.TakenAt) != s(w.TakenAt) || s(m.DateSource) != s(w.DateSource) || f(m.Lat) != f(w.Lat) ||
 			f(m.Lon) != f(w.Lon) || f(m.Alt) != f(w.Alt) || s(m.CameraMake) != s(w.CameraMake) ||
-			s(m.CameraModel) != s(w.CameraModel) {
+			s(m.CameraModel) != s(w.CameraModel)) {
 			metaBad++
 			t.Errorf("%s meta:\n go %s %s %s,%s,%s %q %q\n py %s %s %s,%s,%s %q %q", tag,
 				s(m.TakenAt), s(m.DateSource), f(m.Lat), f(m.Lon), f(m.Alt), s(m.CameraMake), s(m.CameraModel),

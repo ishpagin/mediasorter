@@ -301,17 +301,5 @@ func extract(f *zip.File, dst string) error {
 		return err
 	}
 	defer r.Close()
-	tmp := dst + ".part"
-	w, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(w, r); err != nil {
-		w.Close()
-		return err
-	}
-	if err := w.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, dst)
+	return writeFile(r, dst)
 }

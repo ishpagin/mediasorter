@@ -24,7 +24,7 @@ import (
 type Config struct {
 	DB      *sql.DB
 	Models  string              // folder with det_10g.onnx, w600k_r50.onnx, siglip2/
-	ORT     string              // ONNX Runtime library ("" = default name)
+	ORT     func() string       // ONNX Runtime library ("" = default name), asked on first use
 	Sources func() []string     // folders to scan (read each time: the user may change them)
 	MapPath func(string) string // a stored path -> a path openable here
 	Scan    scan.Options
@@ -55,7 +55,7 @@ func (e *Engine) init() error {
 	if _, err := os.Stat(e.cfg.Models); err != nil {
 		return ErrNoModels
 	}
-	return vision.Init(e.cfg.ORT)
+	return vision.Init(e.cfg.ORT())
 }
 
 func (e *Engine) textModel() (*vision.Clip, error) {

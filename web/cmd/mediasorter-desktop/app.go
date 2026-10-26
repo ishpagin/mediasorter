@@ -110,7 +110,7 @@ func newApp(dir string) (*App, error) {
 	a.eng = engine.New(engine.Config{
 		DB:      d,
 		Models:  a.modelsDir(),
-		ORT:     ortPath(),
+		ORT:     a.ortPath,
 		Sources: func() []string { return engine.Sources(d, nil) },
 		MapPath: func(p string) string { return p },
 		Scan:    opt,
@@ -146,10 +146,16 @@ func exeName(n string) string {
 func (a *App) modelsDir() string { return filepath.Join(a.dir, "models") }
 func (a *App) ffmpegDir() string { return filepath.Join(a.dir, "ffmpeg") }
 
-// ortPath: ONNX Runtime shipped with the app (next to the binary; on macOS in the bundle's Frameworks).
-func ortPath() string {
+func (a *App) cudaDir() string { return filepath.Join(a.dir, "cuda") }
+
+// ortPath: the downloaded CUDA build on Linux with NVIDIA, else ONNX Runtime shipped with the app (next to
+// the binary; on macOS in the bundle's Frameworks).
+func (a *App) ortPath() string {
 	if p := os.Getenv("MS_ORT"); p != "" {
 		return p
+	}
+	if setup.CUDAReady(a.cudaDir()) {
+		return filepath.Join(a.cudaDir(), "libonnxruntime.so")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -319,11 +325,18 @@ func (a *App) prepare(scanNow bool) {
 		}
 		ctx := context.Background()
 		var err error
+		lo := 0.0
+		if setup.NVIDIA() && os.Getenv("MS_GPU") != "0" {
+			lo = 0.5
+			if err := setup.CUDA(ctx, a.cudaDir(), progress(0, lo)); err != nil {
+				log.Printf("cuda: %v", err) // not fatal: the CPU then, and the download resumes next start
+			}
+		}
 		if !a.systemFF {
-			err = setup.FFmpeg(ctx, a.ffmpegDir(), progress(0, 0.1))
+			err = setup.FFmpeg(ctx, a.ffmpegDir(), progress(lo, lo+0.1*(1-lo)))
 		}
 		if err == nil {
-			err = setup.Models(ctx, a.modelsDir(), progress(0.1, 1))
+			err = setup.Models(ctx, a.modelsDir(), progress(lo+0.1*(1-lo), 1))
 		}
 		a.setupMu.Lock()
 		a.setupRun = false

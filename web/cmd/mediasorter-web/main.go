@@ -121,7 +121,7 @@ func main() {
 	eng := engine.New(engine.Config{
 		DB:      d,
 		Models:  env("MS_MODELS", filepath.Join(exeDir(), "models")),
-		ORT:     os.Getenv("MS_ORT"),
+		ORT:     func() string { return os.Getenv("MS_ORT") },
 		Sources: func() []string { return engine.Sources(d, strings.Fields(os.Getenv("PS_SCAN_SRC"))) },
 		MapPath: cfg.MapToLocal,
 		Scan:    opt,
