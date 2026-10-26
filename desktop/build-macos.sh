@@ -16,7 +16,7 @@ tar -xzf "$CACHE/ort-osx-$ORT.tgz" -C /tmp "onnxruntime-osx-arm64-$ORT/lib/libon
 cp "/tmp/onnxruntime-osx-arm64-$ORT/lib/libonnxruntime.$ORT.dylib" "$APP/Contents/Frameworks/libonnxruntime.dylib"
 
 cd "$ROOT/web"
-CGO_ENABLED=1 MACOSX_DEPLOYMENT_TARGET=11.0 go build -trimpath -tags desktop,production -ldflags "-s -w" \
+CGO_ENABLED=1 MACOSX_DEPLOYMENT_TARGET=11.0 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -trimpath -tags desktop,production -ldflags "-s -w" \
     -o "$APP/Contents/MacOS/Mediasorter" ./cmd/mediasorter-desktop
 
 ICONSET=/tmp/Mediasorter.iconset && rm -rf $ICONSET && mkdir $ICONSET
