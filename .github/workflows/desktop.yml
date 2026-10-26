@@ -96,6 +96,6 @@ jobs:
         with:
           path: out
           merge-multiple: true
-      - run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "Mediasorter $GITHUB_REF_NAME" --generate-notes
+      - run: gh release create "$GITHUB_REF_NAME" out/*.zip out/*.tar.gz --repo "$GITHUB_REPOSITORY" --title "Mediasorter $GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
