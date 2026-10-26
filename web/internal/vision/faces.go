@@ -54,10 +54,11 @@ func NewFaces(models string, detSize int, minFace float32) (*Faces, error) {
 	return f, nil
 }
 
-// forDirectML: DirectML can't run these models with free input sizes: fixed-size copies of them
-// (cached next to the originals). The detector then sees a square canvas instead of one padded to x32.
+// forDirectML: DirectML can't run these models with free input sizes (CoreML can't run the detector):
+// fixed-size copies of them (cached next to the originals). The detector then sees a square canvas instead
+// of one padded to x32.
 func (f *Faces) forDirectML(models string) error {
-	if f.det.provider == "directml" {
+	if f.det.provider == "directml" || f.det.provider == "coreml" {
 		f.fixed = map[int]*Session{}
 		for _, side := range []int{f.DetSize, f.DetSize / 2} {
 			p := filepath.Join(models, fmt.Sprintf("det_10g_%d.onnx", side))
