@@ -19,6 +19,9 @@ type Config struct {
 	DBPath    string
 	PathMap   []PathMapping
 	Protected string // protected.txt: folders nothing may be deleted from
+
+	ImportDir   string // MS_IMPORT_DIR: where /api/import puts mail photos; empty = import off
+	ImportToken string // MS_IMPORT_TOKEN: Bearer token of /api/import; empty = import off
 }
 
 // PathMapping: a Windows share prefix of old DB rows (//nas/home/) and its mount point here.

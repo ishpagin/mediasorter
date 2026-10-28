@@ -102,6 +102,12 @@ CREATE TABLE IF NOT EXISTS deleted (
     snapshot   BLOB
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS imports (       -- files received by /api/import: the same file twice is saved once
+    sha256  TEXT PRIMARY KEY,
+    path    TEXT NOT NULL,
+    mail_id TEXT,
+    at      TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS work_queue (
     path        TEXT PRIMARY KEY,
     kind        TEXT NOT NULL,

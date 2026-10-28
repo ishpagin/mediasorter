@@ -109,7 +109,8 @@ func main() {
 		log.Fatalf("db schema: %v", err)
 	}
 	cfg := &core.Config{DBPath: dbPath, PathMap: core.ParsePathMap(os.Getenv("PS_PATH_MAP")),
-		Protected: env("MS_PROTECTED", "/ps/protected.txt")}
+		Protected: env("MS_PROTECTED", "/ps/protected.txt"),
+		ImportDir: os.Getenv("MS_IMPORT_DIR"), ImportToken: os.Getenv("MS_IMPORT_TOKEN")}
 	if err := core.InitUndo(d); err != nil {
 		log.Fatalf("undo table: %v", err)
 	}

@@ -72,6 +72,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/copies", s.copies)
 	mux.HandleFunc("GET /api/jobs", s.jobs)
 	mux.HandleFunc("POST /api/jobs", s.jobs)
+	mux.HandleFunc("POST /api/import", s.importMail)
 	mux.HandleFunc("GET /thumb/face/{id}", s.faceThumb)
 	mux.HandleFunc("GET /preview/{id}", s.preview)
 	mux.HandleFunc("GET /original/{id}", s.original)

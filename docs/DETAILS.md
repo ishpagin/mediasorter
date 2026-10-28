@@ -110,6 +110,8 @@ MS_SCAN_HOUR=3                ночное сканирование; MS_SCAN=0 �
 MS_SCAN_WORKERS=4             файлов одновременно;  MS_GPU=0 — только процессор
 PS_PATH_MAP="//nas/home/=/mnt/nas-homes/user/"   пути старой базы с Windows → пути здесь
 MS_PROTECTED=protected.txt
+MS_IMPORT_DIR=/photos/Почта   куда POST /api/import кладёт фото из писем (<год>/<дата> <отправитель>/)
+MS_IMPORT_TOKEN=...           токен для него (Authorization: Bearer ...); без обоих импорт выключен
 ```
 
 ```
