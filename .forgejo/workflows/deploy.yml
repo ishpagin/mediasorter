@@ -1,0 +1,25 @@
+# MR (pull_request): сборка UI и сервера + go test - зелёная проверка нужна для мерджа, main защищена.
+# Пуш в main (= мердж MR): то же и выкатка образа mediasorter:gpu; упало - на проде остаётся старое.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  deploy:
+    runs-on: pillow # раннер прямо на хосте pillow (systemd forgejo-runner, пользователь deploy)
+    steps:
+      - name: build
+        run: |
+          rm -rf src && git init -q src && cd src
+          git fetch -q --depth 1 "http://x:${{ github.token }}@127.0.0.1:3001/${{ github.repository }}.git" "${{ github.event.pull_request.head.sha || github.sha }}"
+          git checkout -q FETCH_HEAD
+          (cd web/frontend && bun install --silent && bun run build)
+          (cd web && go build -o /dev/null ./cmd/mediasorter-web && go test ./internal/...)
+          [ "${{ github.event_name }}" = push ] || exit 0 # MR: только проверка
+          d=/var/lib/forgejo-runner/deploy-mediasorter
+          rm -rf $d && mkdir -p $d
+          git archive HEAD | tar -x -C $d # чистые исходники для docker build, без node_modules и dist
+      - name: deploy
+        if: github.event_name == 'push'
+        run: sudo /usr/local/sbin/mediasorter-deploy

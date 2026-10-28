@@ -6,7 +6,7 @@ ARG BASE=debian:trixie-slim
 FROM node:22-slim AS ui
 WORKDIR /web/frontend
 COPY web/frontend/package.json web/frontend/package-lock.json ./
-RUN npm ci --no-fund --no-audit
+RUN --mount=type=cache,target=/root/.npm npm ci --no-fund --no-audit
 COPY web/frontend/ ./
 RUN npm run build
 
@@ -14,10 +14,12 @@ RUN npm run build
 FROM golang:1.27 AS server
 WORKDIR /web
 COPY web/go.mod web/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY web/ ./
 COPY --from=ui /web/frontend/dist ./frontend/dist
-RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /mediasorter-web ./cmd/mediasorter-web
+# cache mounts: a code change recompiles only the changed packages (BuildKit)
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /mediasorter-web ./cmd/mediasorter-web
 
 # 3. the models (~1.7 GB): downloaded once, docker caches this layer across code updates
 FROM debian:trixie-slim AS models
