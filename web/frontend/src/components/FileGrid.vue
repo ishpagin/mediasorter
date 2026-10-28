@@ -11,6 +11,7 @@ import WhoDialog from './WhoDialog.vue'
 import { faceUrl, previewUrl, type Item } from '@/api'
 import { useActions } from '@/stores/actions'
 import { useSettings } from '@/stores/settings'
+import { useQuery } from '@/composables/useQuery'
 
 // collect: offer the collection actions (off on the collections page itself);
 // person: the person whose page this is ("who is on the photo" fixes their faces first)
@@ -185,7 +186,9 @@ function onDown(e: MouseEvent) {
 
 // ---------------------------------------------------------------- viewer + keyboard
 
-const viewing = ref<number | null>(null)
+const query = useQuery()
+const viewing = ref<number | null>(Number(query.q('view')) || null) // ?view=<id>: a link opens the file right away
+watch(viewing, (v) => query.set('view', v))
 
 function open(id: number) {
   viewing.value = id

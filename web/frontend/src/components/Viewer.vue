@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Full-screen viewer: the original (the stored preview shows at once), ← → / Tab between groups, a strip of
+// Full-screen viewer: the original (the stored preview shows at once), ↑ ↓ (and ← → on photos) / Tab between groups, a strip of
 // the current group (stack / copies) at the bottom, F = full screen, Esc = close.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronLeft, ChevronRight, Maximize, Trash2, TriangleAlert, X } from '@lucide/vue'
@@ -12,6 +12,7 @@ const emit = defineEmits<{ delete: [ids: number[]]; undo: [] }>()
 
 const root = ref<HTMLElement>()
 const strip = ref<HTMLElement>()
+const video = ref<HTMLVideoElement>()
 const order = computed(() => props.items.map((it) => it.id))
 const index = computed(() => order.value.indexOf(id.value ?? -1))
 const item = computed(() => props.items[index.value])
@@ -79,12 +80,28 @@ function toggleFull() {
   else root.value?.requestFullscreen().catch(() => {})
 }
 
+// YouTube-like keys on a video; ↑ ↓ list files (as in TikTok), so ← → are free for seeking
+function videoKey(e: KeyboardEvent): (() => void) | undefined {
+  const v = video.value
+  if (!v || item.value?.kind !== 'video') return
+  const seek = (s: number) => () => { v.currentTime = Math.max(0, v.currentTime + s) }
+  const frame = (k: number) => () => { v.pause(); v.currentTime += k / 30 }
+  const speed = (k: number) => () => { v.playbackRate = Math.min(2, Math.max(0.25, v.playbackRate + k * 0.25)) }
+  const toggle = () => { if (v.paused) v.play().catch(() => {}); else v.pause() }
+  if (/^Digit\d$/.test(e.code)) return () => { v.currentTime = (v.duration * Number(e.code[5])) / 10 }
+  return ({
+    Space: toggle, KeyK: toggle, KeyM: () => { v.muted = !v.muted },
+    ArrowLeft: seek(-5), ArrowRight: seek(5), KeyJ: seek(-10), KeyL: seek(10),
+    Comma: e.shiftKey ? speed(-1) : frame(-1), Period: e.shiftKey ? speed(1) : frame(1),
+  } as Record<string, () => void>)[e.code]
+}
+
 function onKey(e: KeyboardEvent) {
   const ctrl = e.ctrlKey || e.metaKey
   const fn: (() => void) | undefined = ctrl
     ? ({ KeyZ: () => emit('undo'), KeyD: remove } as Record<string, () => void>)[e.code] // Ctrl+D: delete, as in the old UI
-    : ({
-        ArrowRight: () => step(1), ArrowLeft: () => step(-1), Escape: close,
+    : videoKey(e) ?? ({
+        ArrowDown: () => step(1), ArrowUp: () => step(-1), ArrowRight: () => step(1), ArrowLeft: () => step(-1), Escape: close,
         Tab: () => jumpGroup(e.shiftKey ? -1 : 1), Delete: remove, Backspace: remove,
       } as Record<string, () => void>)[e.key] ?? (e.code === 'KeyF' ? toggleFull : undefined)
   if (fn) { e.preventDefault(); e.stopPropagation(); fn() }
@@ -106,14 +123,15 @@ const info = computed(() => {
         <span class="pos">{{ index + 1 }} / {{ items.length.toLocaleString('ru') }}</span>
         <span class="info" :title="item.path">{{ info }}</span>
         <span v-if="failed" class="warn"><TriangleAlert class="inline size-3.5" /> оригинал недоступен</span>
-        <span class="keys">← → листать · Tab группы · Delete удалить · F экран · Esc</span>
+        <span v-if="item.kind === 'video'" class="keys">↑ ↓ листать · ← → J L перемотка · Space пауза · M звук · F экран · Esc</span>
+        <span v-else class="keys">↑ ↓ ← → листать · Tab группы · Delete удалить · F экран · Esc</span>
         <slot name="actions" :id="item.id" />
         <Button variant="ghost" size="sm" class="text-red-400 hover:text-red-300" @click="remove"><Trash2 />Удалить</Button>
         <Button variant="ghost" size="icon-sm" aria-label="Во весь экран" title="Во весь экран (F)" @click="toggleFull"><Maximize /></Button>
         <Button variant="ghost" size="icon-sm" aria-label="Закрыть" title="Закрыть (Esc)" @click="close"><X /></Button>
       </header>
       <div class="stage" @click.self="close">
-        <video v-if="item.kind === 'video'" :key="item.id" :src="originalUrl(item.id)" controls autoplay class="media" />
+        <video v-if="item.kind === 'video'" ref="video" :key="item.id" :src="originalUrl(item.id)" controls autoplay class="media" />
         <img v-else :key="item.id" :src="full ?? previewUrl(item.id)" alt="" class="media" draggable="false" />
         <button class="nav prev" :disabled="index <= 0" aria-label="Предыдущее" @click="step(-1)"><ChevronLeft class="mx-auto size-6" /></button>
         <button class="nav next" :disabled="index >= items.length - 1" aria-label="Следующее" @click="step(1)"><ChevronRight class="mx-auto size-6" /></button>
@@ -130,6 +148,7 @@ const info = computed(() => {
 <style scoped>
 .viewer {
   position: fixed; inset: 0; z-index: 1100; display: grid; grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr); /* a long nowrap header would widen the column past the screen */
   background: #000; color: #f4f4f5; animation: v-in 160ms ease-out both;
 }
 @keyframes v-in { from { opacity: 0; } }
@@ -143,8 +162,8 @@ const info = computed(() => {
 .info { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .warn { color: #fbbf24; white-space: nowrap; }
 .keys { margin-left: auto; color: #71717a; white-space: nowrap; font-size: 12px; }
-.stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden; }
-.media { max-width: 100%; max-height: 100%; object-fit: contain; animation: m-in 220ms var(--ms-ease) both; }
+.stage { position: relative; min-height: 0; display: grid; grid-template: 100% / 100%; place-items: center; overflow: hidden; }
+.media { width: 100%; height: 100%; object-fit: contain; /* upscales small previews too */ animation: m-in 220ms var(--ms-ease) both; }
 @keyframes m-in { from { opacity: .4; transform: scale(.985); } }
 .nav {
   position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 96px; border: none; border-radius: 12px;
