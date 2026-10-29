@@ -75,9 +75,16 @@ function remove() {
   id.value = next
 }
 
+let leaving = false // our own exit from full screen (F), not Esc
 function toggleFull() {
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+  if (document.fullscreenElement) { leaving = true; document.exitFullscreen().catch(() => {}) }
   else root.value?.requestFullscreen().catch(() => {})
+}
+// the browser eats the Esc that leaves full screen, so treat that exit as Esc
+function onFullscreen() {
+  if (document.fullscreenElement) return
+  if (!leaving) close()
+  leaving = false
 }
 
 // YouTube-like keys on a video; ↑ ↓ list files (as in TikTok), so ← → are free for seeking
@@ -106,8 +113,15 @@ function onKey(e: KeyboardEvent) {
       } as Record<string, () => void>)[e.key] ?? (e.code === 'KeyF' ? toggleFull : undefined)
   if (fn) { e.preventDefault(); e.stopPropagation(); fn() }
 }
-onMounted(() => window.addEventListener('keydown', onKey, true))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
+onMounted(() => {
+  window.addEventListener('keydown', onKey, true)
+  document.addEventListener('fullscreenchange', onFullscreen)
+  root.value?.focus() // keys work without clicking into the viewer first
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey, true)
+  document.removeEventListener('fullscreenchange', onFullscreen)
+})
 
 const info = computed(() => {
   const it = item.value
@@ -118,7 +132,7 @@ const info = computed(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="item" ref="root" class="viewer" :class="{ 'has-strip': group.length > 1 }">
+    <div v-if="item" ref="root" tabindex="-1" class="viewer" :class="{ 'has-strip': group.length > 1 }">
       <header class="top">
         <span class="pos">{{ index + 1 }} / {{ items.length.toLocaleString('ru') }}</span>
         <span class="info" :title="item.path">{{ info }}</span>
@@ -151,6 +165,7 @@ const info = computed(() => {
   grid-template-columns: minmax(0, 1fr); /* a long nowrap header would widen the column past the screen */
   background: #000; color: #f4f4f5; animation: v-in 160ms ease-out both;
 }
+.viewer:focus { outline: none; }
 @keyframes v-in { from { opacity: 0; } }
 .top {
   display: flex; align-items: center; gap: 12px; padding: 6px 12px; font-size: 13px;
