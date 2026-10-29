@@ -16,6 +16,7 @@
 ![Docker](https://img.shields.io/badge/Docker-one--click-2496ED?logo=docker&logoColor=white)
 ![NVIDIA](https://img.shields.io/badge/GPU-optional-76B900?logo=nvidia&logoColor=white)
 ![Offline](https://img.shields.io/badge/100%25-offline-success)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
 
 [Возможности](#-возможности) · [Программа](#программа-на-компьютер) · [Сервер](#сервер-на-nas-или-домашнем-компьютере-docker) · [NAS](#фото-на-nas-сетевом-хранилище) · [Как пользоваться](#как-пользоваться) · [FAQ](#частые-вопросы)
 
@@ -176,3 +177,9 @@
 
 Модели: InsightFace buffalo_l (лица; веса — только некоммерческое использование) и SigLIP2 (сюжеты и поиск).
 Места съёмки — по таблице городов [GeoNames](https://www.geonames.org/) (CC BY 4.0).
+
+## Лицензия
+
+Бесплатно для личного использования: ставь дома, меняй под себя, делись с друзьями. Продавать программу или делать
+на ней платный продукт и сервис нельзя. Лицензия [PolyForm Noncommercial 1.0.0](LICENSE). Для коммерческого
+использования пиши автору.
