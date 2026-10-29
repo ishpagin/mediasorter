@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # откат: Actions, "Run workflow", в ref любой прошлый коммит или тег, он выкатится тем же путём
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Коммит или тег, который выкатить (для отката)"
+        required: true
 
 jobs:
   deploy:
@@ -12,14 +18,14 @@ jobs:
       - name: build
         run: |
           rm -rf src && git init -q src && cd src
-          git fetch -q --depth 1 "http://x:${{ github.token }}@127.0.0.1:3001/${{ github.repository }}.git" "${{ github.event.pull_request.head.sha || github.sha }}"
+          git fetch -q --depth 1 "http://x:${{ github.token }}@127.0.0.1:3001/${{ github.repository }}.git" "${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}"
           git checkout -q FETCH_HEAD
           (cd web/frontend && bun install --silent && bun run build)
           (cd web && go build -o /dev/null ./cmd/mediasorter-web && go test ./internal/...)
-          [ "${{ github.event_name }}" = push ] || exit 0 # MR: только проверка
+          [ "${{ github.event_name }}" != pull_request ] || exit 0 # MR: только проверка
           d=/var/lib/forgejo-runner/deploy-mediasorter
           rm -rf $d && mkdir -p $d
           git archive HEAD | tar -x -C $d # чистые исходники для docker build, без node_modules и dist
       - name: deploy
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: sudo /usr/local/sbin/mediasorter-deploy
