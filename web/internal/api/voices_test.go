@@ -52,7 +52,9 @@ func TestPersonMedia(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatalf("%s: %d", url, w.Code)
 		}
-		json.Unmarshal(w.Body.Bytes(), out)
+		if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
+			panic(err)
+		}
 	}
 
 	var files FilesResp
@@ -118,7 +120,9 @@ func do(mux *http.ServeMux, method, url, body string, out any) int {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(method, url, strings.NewReader(body)))
 	if out != nil {
-		json.Unmarshal(w.Body.Bytes(), out)
+		if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
+			panic(err)
+		}
 	}
 	return w.Code
 }
@@ -161,13 +165,17 @@ func TestVoiceAssign(t *testing.T) {
 	if n != 2 {
 		t.Errorf("n_voices = %d, want 2", n)
 	}
-	do(mux, "POST", "/api/voices/1/person", `{"clear":true}`, nil)
+	if c := do(mux, "POST", "/api/voices/1/person", `{"clear":true}`, nil); c != 200 {
+		t.Fatal(c)
+	}
 	read()
 	d.QueryRow("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = 1 AND person_id = 1").Scan(&n)
 	if per[0].Valid || man[0] != 1 || n != 1 {
 		t.Errorf("clear: %v %v marks=%d", man, per, n)
 	}
-	do(mux, "POST", "/api/voices/3/person", `{"create":true}`, nil)
+	if c := do(mux, "POST", "/api/voices/3/person", `{"create":true}`, nil); c != 200 {
+		t.Fatal(c)
+	}
 	read()
 	if !per[2].Valid || per[2].Int64 < 3 || man[2] != 1 {
 		t.Errorf("create: %v %v", man, per)
@@ -187,12 +195,18 @@ func TestVoicesSameConflict(t *testing.T) {
 	if p1 != 1 || p2 != 2 {
 		t.Errorf("changed: %d %d", p1, p2)
 	}
+	d.Exec("INSERT INTO voice_not_person VALUES (3, 1)")
 	if c := do(mux, "POST", "/api/voices/same", `{"a":1,"b":3}`, nil); c != 200 {
 		t.Fatal(c)
 	}
 	d.QueryRow("SELECT person_id FROM voices WHERE id = 3").Scan(&p1)
 	if p1 != 1 {
 		t.Errorf("same: voice 3 has person %d, want 1", p1)
+	}
+	var marks int
+	d.QueryRow("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = 3").Scan(&marks)
+	if marks != 0 {
+		t.Errorf("same left a contradicting mark")
 	}
 }
 
@@ -210,5 +224,23 @@ func TestVoicePairs(t *testing.T) {
 	do(mux, "GET", "/api/voices/pairs", "", &r)
 	if len(r.Pairs) != 1 {
 		t.Errorf("after notsame: %+v", r.Pairs)
+	}
+}
+
+func TestVoiceAssignSpread(t *testing.T) {
+	mux, d := voiceServer(t,
+		"INSERT INTO voices (id, file_id, label, seconds, model, cluster, person_id) VALUES (1, 1, 's1', 9, 'm', 7, NULL), (2, 2, 's1', 9, 'm', 7, NULL), (3, 2, 's2', 9, 'm', 7, 2), (4, 1, 's2', 9, 'm', 7, NULL)",
+		"INSERT INTO voice_not_person VALUES (2, 1)")
+	if c := do(mux, "POST", "/api/voices/1/person", `{"person":1}`, nil); c != 200 {
+		t.Fatal(c)
+	}
+	got := map[int]int64{}
+	for i := 2; i <= 4; i++ {
+		var p sql.NullInt64
+		d.QueryRow("SELECT person_id FROM voices WHERE id = ?", i).Scan(&p)
+		got[i] = p.Int64
+	}
+	if got[2] != 0 || got[3] != 2 || got[4] != 1 {
+		t.Errorf("spread: %v (marked voice and named other person stay, free one follows)", got)
 	}
 }

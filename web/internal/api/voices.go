@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -112,8 +113,11 @@ func (s *Server) voicePerson(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var cur, cluster sql.NullInt64
-	if err := tx.QueryRow("SELECT person_id, cluster FROM voices WHERE id = ?", id).Scan(&cur, &cluster); err != nil {
+	if err := tx.QueryRow("SELECT person_id, cluster FROM voices WHERE id = ?", id).Scan(&cur, &cluster); errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "такого голоса нет", http.StatusNotFound)
+		return
+	} else if err != nil {
+		fail(w, err, 500)
 		return
 	}
 	msg := "Запомнил"
@@ -142,7 +146,9 @@ func (s *Server) voicePerson(w http.ResponseWriter, r *http.Request) {
 			_, err = tx.Exec("DELETE FROM voice_not_person WHERE voice_id = ? AND person_id = ?", id, pid)
 		}
 		if err == nil && cluster.Valid {
-			_, err = tx.Exec("UPDATE voices SET person_id = ?, suggest_id = NULL WHERE cluster = ? AND manual = 0 AND id != ?", pid, cluster.Int64, id)
+			_, err = tx.Exec(`UPDATE voices SET person_id = ?1, suggest_id = NULL WHERE cluster = ?2 AND manual = 0 AND id != ?3
+				AND (person_id IS NULL OR person_id = ?1 OR person_id IN (SELECT id FROM persons WHERE name IS NULL))
+				AND NOT EXISTS (SELECT 1 FROM voice_not_person n WHERE n.voice_id = voices.id AND n.person_id = ?1)`, pid, cluster.Int64, id)
 		}
 		msg = "Голос закреплён за человеком"
 	}
@@ -185,9 +191,13 @@ func (s *Server) voicesSame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var pa, pb sql.NullInt64
-	if s.DB.QueryRow("SELECT person_id FROM voices WHERE id = ?", req.A).Scan(&pa) != nil ||
-		s.DB.QueryRow("SELECT person_id FROM voices WHERE id = ?", req.B).Scan(&pb) != nil {
+	errA := s.DB.QueryRow("SELECT person_id FROM voices WHERE id = ?", req.A).Scan(&pa)
+	errB := s.DB.QueryRow("SELECT person_id FROM voices WHERE id = ?", req.B).Scan(&pb)
+	if errors.Is(errA, sql.ErrNoRows) || errors.Is(errB, sql.ErrNoRows) {
 		http.Error(w, "такого голоса нет", http.StatusNotFound)
+		return
+	} else if err := errors.Join(errA, errB); err != nil {
+		fail(w, err, 500)
 		return
 	}
 	if pa.Valid && pb.Valid && pa.Int64 != pb.Int64 {
@@ -220,6 +230,9 @@ func (s *Server) voicesSame(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		_, err = tx.Exec("UPDATE voices SET person_id = ?, suggest_id = NULL, manual = 1 WHERE id IN (?, ?)", pid, req.A, req.B)
+	}
+	if err == nil { // the user's "same" beats an older "not his voice"
+		_, err = tx.Exec("DELETE FROM voice_not_person WHERE voice_id IN (?, ?) AND person_id = ?", req.A, req.B, pid)
 	}
 	if err == nil {
 		_, err = tx.Exec("DELETE FROM voice_not_same WHERE a = ? AND b = ?", min(req.A, req.B), max(req.A, req.B))
@@ -297,6 +310,9 @@ func (s *Server) voicePairs(w http.ResponseWriter, r *http.Request) {
 			rows.Close()
 			fail(w, err, 500)
 			return
+		}
+		if len(emb) < 2 {
+			continue
 		}
 		v := scan.Vectors(emb, len(emb)/2)[0]
 		g := groups[cl]
