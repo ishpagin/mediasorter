@@ -198,8 +198,12 @@ func wav(pcm []float32) []byte {
 	b.WriteString("RIFF")
 	binary.Write(&b, binary.LittleEndian, 36+n)
 	b.WriteString("WAVEfmt ")
-	binary.Write(&b, binary.LittleEndian, []any{uint32(16), uint16(1), uint16(1), uint32(vision.SpeechRate),
-		uint32(2 * vision.SpeechRate), uint16(2), uint16(16)})
+	binary.Write(&b, binary.LittleEndian, struct { // binary.Write skips a []any silently: a struct
+		Size             uint32
+		Format, Channels uint16
+		Rate, ByteRate   uint32
+		Align, Bits      uint16
+	}{16, 1, 1, vision.SpeechRate, 2 * vision.SpeechRate, 2, 16})
 	b.WriteString("data")
 	binary.Write(&b, binary.LittleEndian, n)
 	for _, x := range pcm {

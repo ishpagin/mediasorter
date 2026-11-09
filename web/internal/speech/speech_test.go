@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -70,6 +72,30 @@ func TestSegments(t *testing.T) {
 func ff(t *testing.T, args ...string) {
 	if out, err := exec.Command(media.FFmpeg, append([]string{"-v", "error", "-y"}, args...)...).CombinedOutput(); err != nil {
 		t.Fatalf("ffmpeg %v: %v %s", args, err, out)
+	}
+}
+
+// TestWav: what Remote sends is a WAV ffmpeg reads back sample for sample.
+func TestWav(t *testing.T) {
+	if _, err := exec.LookPath(media.FFmpeg); err != nil {
+		t.Skip("no ffmpeg")
+	}
+	pcm := make([]float32, 3*vision.SpeechRate)
+	for i := range pcm {
+		pcm[i] = float32(math.Sin(float64(i) / 10))
+	}
+	p := filepath.Join(t.TempDir(), "a.wav")
+	if err := os.WriteFile(p, wav(pcm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Audio(context.Background(), p)
+	if err != nil || len(got) != len(pcm) {
+		t.Fatalf("read back %d samples of %d: %v", len(got), len(pcm), err)
+	}
+	for i := range pcm {
+		if math.Abs(float64(got[i]-pcm[i])) > 1e-3 {
+			t.Fatalf("sample %d: %f, want %f", i, got[i], pcm[i])
+		}
 	}
 }
 
