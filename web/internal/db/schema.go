@@ -183,6 +183,35 @@ CREATE TABLE IF NOT EXISTS speech_done (     -- videos already listened to (with
     mtime   INTEGER,                         -- files.mtime then: a changed file is listened to again
     error   TEXT
 );
+CREATE TABLE IF NOT EXISTS voices (          -- one speaker in one video (asr label), see package speech
+    id         INTEGER PRIMARY KEY,
+    file_id    INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    label      TEXT NOT NULL,                -- speaker label inside the video
+    seconds    REAL NOT NULL,
+    model      TEXT NOT NULL,
+    emb        BLOB,                         -- float16, L2-normalised; NULL = too short to compare
+    cluster    INTEGER,
+    person_id  INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+    manual     INTEGER NOT NULL DEFAULT 0,   -- 1 = the user chose person_id
+    suggest_id INTEGER REFERENCES persons(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS voices_file ON voices(file_id);
+CREATE INDEX IF NOT EXISTS voices_person ON voices(person_id);
+CREATE INDEX IF NOT EXISTS voices_cluster ON voices(cluster);
+CREATE TABLE IF NOT EXISTS voice_not_same (  -- "different people" marks, a < b
+    a INTEGER NOT NULL,
+    b INTEGER NOT NULL,
+    PRIMARY KEY (a, b)
+);
+CREATE TABLE IF NOT EXISTS voice_not_person ( -- "not his voice" marks
+    voice_id  INTEGER NOT NULL REFERENCES voices(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL,
+    PRIMARY KEY (voice_id, person_id)
+);
+CREATE VIEW IF NOT EXISTS person_media AS    -- files where a person is seen or heard
+SELECT person_id, file_id FROM faces WHERE person_id IS NOT NULL
+UNION
+SELECT person_id, file_id FROM voices WHERE person_id IS NOT NULL;
 `
 
 // Migrate creates missing tables and adds columns older databases lack.
@@ -198,6 +227,8 @@ func Migrate(d *sql.DB) error {
 		{"persons", "skip_collect", "ALTER TABLE persons ADD COLUMN skip_collect INTEGER NOT NULL DEFAULT 0"},
 		{"faces", "manual", "ALTER TABLE faces ADD COLUMN manual INTEGER NOT NULL DEFAULT 0"},
 		{"collections", "person_id", "ALTER TABLE collections ADD COLUMN person_id INTEGER"},
+		{"persons", "n_voices", "ALTER TABLE persons ADD COLUMN n_voices INTEGER NOT NULL DEFAULT 0"},
+		{"speech", "voice_id", "ALTER TABLE speech ADD COLUMN voice_id INTEGER REFERENCES voices(id) ON DELETE SET NULL"},
 	}
 	for _, a := range add {
 		ok, err := hasColumn(d, a.table, a.col)
