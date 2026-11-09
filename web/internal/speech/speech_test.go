@@ -51,7 +51,9 @@ func TestSegments(t *testing.T) {
 		tok(" При", 0.1), tok("вет", 0.2), tok(" ,", 0.3), tok(" мир", 0.4), tok(".", 0.5),
 		tok(" Как", 0.7), tok(" дела", 1.2), // a pause, no full stop
 		tok(" Хо", 5), tok("рошо", 5.1), tok("!", 5.2),
-		tok(" .", 9), // a lone mark is not a phrase
+		tok(" .", 9),                  // a lone mark is not a phrase
+		tok(" С", 12), tok(".", 12.1), // a one-letter scrap
+		{Text: " мне", At: 15, LogProb: -1.5}, {Text: " то", At: 15.1, LogProb: -1.5}, {Text: ".", At: 15.2, LogProb: -1}, // unsure
 	})
 	want := []Segment{{0.1, 0.7, "Привет, мир."}, {0.7, 1.5, "Как дела"}, {5, 5.5, "Хорошо!"}}
 	if len(got) != len(want) {

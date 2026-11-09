@@ -10,19 +10,20 @@ import (
 
 // Item is one file in a list; the UI builds its caption from these fields.
 type Item struct {
-	ID    int64  `json:"id"`
-	Kind  string `json:"kind"`
-	Name  string `json:"name"`
-	Path  string `json:"path"`
-	Taken string `json:"taken,omitempty"`
-	Place string `json:"place,omitempty"`
-	Who   string `json:"who,omitempty"`  // named people on it, "+N" = other faces
-	Coll  string `json:"coll,omitempty"` // collections it is in
-	Tag   string `json:"tag,omitempty"`  // top scene category
-	Face  int64  `json:"face,omitempty"` // show this face instead of the whole frame
-	Group int64  `json:"group,omitempty"`
-	Head  string `json:"head,omitempty"` // group header (stacks, copies), on the first item of a group
-	Note  string `json:"note,omitempty"` // a page-specific first caption line (rank in a stack, search score...)
+	ID    int64   `json:"id"`
+	Kind  string  `json:"kind"`
+	Name  string  `json:"name"`
+	Path  string  `json:"path"`
+	Taken string  `json:"taken,omitempty"`
+	Place string  `json:"place,omitempty"`
+	Who   string  `json:"who,omitempty"`  // named people on it, "+N" = other faces
+	Coll  string  `json:"coll,omitempty"` // collections it is in
+	Tag   string  `json:"tag,omitempty"`  // top scene category
+	Face  int64   `json:"face,omitempty"` // show this face instead of the whole frame
+	Group int64   `json:"group,omitempty"`
+	Head  string  `json:"head,omitempty"` // group header (stacks, copies), on the first item of a group
+	Note  string  `json:"note,omitempty"` // a page-specific first caption line (rank in a stack, search score...)
+	At    float64 `json:"at,omitempty"`   // a video found by its speech: where the phrase starts, seconds
 }
 
 type Count struct {

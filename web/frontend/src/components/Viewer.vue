@@ -3,7 +3,9 @@
 // the current group (stack / copies) at the bottom, what is said in a video on the right, F = full screen, Esc = close.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Captions, ChevronLeft, ChevronRight, Maximize, Trash2, TriangleAlert, X } from '@lucide/vue'
+import { useRoute } from 'vue-router'
 import { Button } from '@/components/ui/button'
+import SpeechPanel from './SpeechPanel.vue'
 import { api, originalUrl, previewUrl, type Item, type Segment } from '../api'
 
 const props = defineProps<{ items: Item[] }>()
@@ -50,7 +52,8 @@ watch(() => props.items, () => { if (index.value < 0) close() }) // the file is 
 const said = ref<Segment[]>([])
 const now = ref(-1)
 const showText = ref(true)
-const textPanel = ref<HTMLElement>()
+const route = useRoute()
+const query = computed(() => String(route.query.q ?? '')) // opened from the search: its words are marked
 const hasText = computed(() => showText.value && said.value.length > 0)
 watch(() => item.value?.id, async (want) => {
   said.value = []
@@ -67,17 +70,12 @@ function onTime() {
   while (i + 1 < said.value.length && said.value[i + 1].start <= t + 0.05) i++
   now.value = i
 }
-watch(now, async () => {
-  await nextTick()
-  textPanel.value?.querySelector('.cur')?.scrollIntoView({ block: 'nearest' })
-})
 function playFrom(t: number) {
   const v = video.value
   if (!v) return
   v.currentTime = t
   v.play().catch(() => {})
 }
-const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
 function step(k: number) {
   const next = order.value[index.value + k]
@@ -137,6 +135,7 @@ function videoKey(e: KeyboardEvent): (() => void) | undefined {
 }
 
 function onKey(e: KeyboardEvent) {
+  if ((e.target as HTMLElement)?.tagName === 'INPUT' && e.key !== 'Escape') return // typing in the text search
   const ctrl = e.ctrlKey || e.metaKey
   const fn: (() => void) | undefined = ctrl
     ? ({ KeyZ: () => emit('undo'), KeyD: remove } as Record<string, () => void>)[e.code] // Ctrl+D: delete, as in the old UI
@@ -180,16 +179,12 @@ const info = computed(() => {
         <Button variant="ghost" size="icon-sm" aria-label="Закрыть" title="Закрыть (Esc)" @click="close"><X /></Button>
       </header>
       <div class="stage" :class="{ 'with-text': hasText }" @click.self="close">
-        <video v-if="item.kind === 'video'" ref="video" :key="item.id" :src="originalUrl(item.id)" controls autoplay class="media"
+        <video v-if="item.kind === 'video'" ref="video" :key="item.id" :src="originalUrl(item.id) + (item.at ? `#t=${item.at}` : '')" controls autoplay class="media"
                @timeupdate="onTime" />
         <img v-else :key="item.id" :src="full ?? previewUrl(item.id)" alt="" class="media" draggable="false" />
         <button class="nav prev" :disabled="index <= 0" aria-label="Предыдущее" @click="step(-1)"><ChevronLeft class="mx-auto size-6" /></button>
         <button class="nav next" :disabled="index >= items.length - 1" aria-label="Следующее" @click="step(1)"><ChevronRight class="mx-auto size-6" /></button>
-        <aside v-if="hasText" ref="textPanel" class="said" aria-label="Что говорят в видео">
-          <button v-for="(s, i) in said" :key="i" :class="{ cur: i === now }" @click="playFrom(s.start)">
-            <span class="at">{{ mmss(s.start) }}</span>{{ s.text }}
-          </button>
-        </aside>
+        <SpeechPanel v-if="hasText" :said="said" :now="now" :query="query" @play="playFrom" />
       </div>
       <div v-if="group.length > 1" ref="strip" class="strip">
         <button v-for="g in group" :key="g.id" class="thumb" :class="{ cur: g.id === item.id }" :title="g.name" @click="id = g.id">
@@ -231,20 +226,9 @@ const info = computed(() => {
 .next { right: 16px; }
 .stage.with-text { grid-template: 100% / minmax(0, 1fr) 340px; }
 .stage.with-text .next { right: 356px; }
-.said {
-  place-self: stretch; overflow-y: auto; padding: 8px; background: rgba(24, 24, 27, .92); border-left: 1px solid #27272a; scrollbar-width: thin;
-}
-.said button {
-  display: block; width: 100%; padding: 6px 10px; border: none; border-radius: 8px; background: none; color: #a1a1aa;
-  font-size: 14px; line-height: 1.45; text-align: left; cursor: pointer; transition: background-color 120ms var(--ms-ease), color 120ms var(--ms-ease);
-}
-.said button:hover { background: #27272a; color: #f4f4f5; }
-.said button.cur { color: #f4f4f5; background: #27272a; box-shadow: inset 2px 0 0 var(--ms-pick); }
-.said .at { margin-right: 8px; font-size: 12px; color: #71717a; font-variant-numeric: tabular-nums; }
 @media (max-width: 800px) {
   .stage.with-text { grid-template: minmax(0, 1fr) 38% / 100%; }
   .stage.with-text .next { right: 16px; }
-  .said { border-left: none; border-top: 1px solid #27272a; }
 }
 .strip {
   display: flex; gap: 8px; justify-content: safe center; overflow-x: auto; padding: 10px 16px;

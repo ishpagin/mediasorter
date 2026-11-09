@@ -215,22 +215,23 @@ func (s *Server) spoken(q, cond string) ([]Item, error) {
 	if len(where) == 0 {
 		return nil, nil
 	}
-	rows, err := s.DB.Query(`SELECT s.file_id, s.text FROM speech s JOIN files f ON f.id = s.file_id
+	rows, err := s.DB.Query(`SELECT s.file_id, s.text, s.t_start FROM speech s JOIN files f ON f.id = s.file_id
 		WHERE `+strings.Join(where, " AND ")+cond+` ORDER BY s.file_id, s.t_start`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	first, n := map[int64]string{}, map[int64]int{}
+	first, n, at := map[int64]string{}, map[int64]int{}, map[int64]float64{}
 	var ids []int64
 	for rows.Next() {
 		var id int64
 		var text string
-		if err := rows.Scan(&id, &text); err != nil {
+		var t float64
+		if err := rows.Scan(&id, &text, &t); err != nil {
 			return nil, err
 		}
 		if n[id] == 0 {
-			ids, first[id] = append(ids, id), text
+			ids, first[id], at[id] = append(ids, id), text, t
 		}
 		n[id]++
 	}
@@ -248,7 +249,7 @@ func (s *Server) spoken(q, cond string) ([]Item, error) {
 		if len(t) > 90 {
 			t = append(t[:90], '…')
 		}
-		got[i].Note = `в речи: "` + string(t) + `"`
+		got[i].Note, got[i].At = `в речи: "`+string(t)+`"`, at[got[i].ID]
 	}
 	return got, nil
 }

@@ -102,7 +102,8 @@ func Local(m *vision.Speech) Recognizer {
 				return nil, err
 			}
 			for _, x := range t {
-				toks = append(toks, vision.Token{Text: x.Text, At: x.At + float64(from)/vision.SpeechRate})
+				x.At += float64(from) / vision.SpeechRate
+				toks = append(toks, x)
 			}
 			from = to
 		}
@@ -110,16 +111,34 @@ func Local(m *vision.Speech) Recognizer {
 	}
 }
 
-// Segments: tokens into phrases, split after . ! ? … and at pauses over 1.5 s.
+// minConfidence: phrases the model is less sure of are dropped (mean token probability). On real speech
+// misheard phrases sit at 0.5-0.6, noise and music give no tokens at all; asr's VAD will do the rest.
+const minConfidence = 0.45
+
+// worth: a phrase with at least two letters or digits (one-letter scraps come out of noise).
+func worth(t string) bool {
+	n := 0
+	for _, r := range t {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			n++
+		}
+	}
+	return n >= 2
+}
+
+// Segments: tokens into phrases, split after . ! ? … and at pauses over 1.5 s; scraps and unsure phrases dropped.
 func Segments(toks []vision.Token) []Segment {
 	var out []Segment
 	var b strings.Builder
 	start, last := 0.0, 0.0
+	var logp float64
+	n := 0
 	flush := func() {
-		if t := join(b.String()); strings.IndexFunc(t, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0 {
+		if t := join(b.String()); n > 0 && worth(t) && math.Exp(logp/float64(n)) >= minConfidence {
 			out = append(out, Segment{start, last + 0.3, t})
 		}
 		b.Reset()
+		logp, n = 0, 0
 	}
 	for _, t := range toks {
 		if b.Len() > 0 && t.At-last > 1.5 {
@@ -130,6 +149,8 @@ func Segments(toks []vision.Token) []Segment {
 		}
 		b.WriteString(t.Text)
 		last = t.At
+		logp += float64(t.LogProb)
+		n++
 		if s := strings.TrimSpace(t.Text); s != "" && strings.ContainsAny(s[len(s)-1:], ".!?") || strings.HasSuffix(s, "…") {
 			flush()
 		}
@@ -183,7 +204,7 @@ func Remote(url string) Recognizer {
 		}
 		out := r.Segments[:0]
 		for _, s := range r.Segments {
-			if s.Text = strings.TrimSpace(s.Text); s.Text != "" {
+			if s.Text = strings.TrimSpace(s.Text); worth(s.Text) {
 				out = append(out, s)
 			}
 		}

@@ -33,8 +33,9 @@ type Speech struct {
 
 // Token: a piece of recognized text ("▁" already turned into a space) and when it was said, in seconds.
 type Token struct {
-	Text string
-	At   float64
+	Text    string
+	At      float64
+	LogProb float32 // the model's log-probability of this token (0 = sure)
 }
 
 // LoadSpeech opens the model in dir (v3_e2e_ctc.int8.onnx, v3_e2e_ctc_vocab.txt). The CPU only: the model is int8.
@@ -128,7 +129,7 @@ func (s *Speech) Recognize(pcm []float32) ([]Token, error) {
 			}
 		}
 		if k != s.blank && k != prev && k < len(s.vocab) {
-			toks = append(toks, Token{s.vocab[k], float64(t) * speechFrame})
+			toks = append(toks, Token{s.vocab[k], float64(t) * speechFrame, row[k]})
 		}
 		prev = k
 	}

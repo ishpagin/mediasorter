@@ -23,7 +23,7 @@ func TestSearchSpeech(t *testing.T) {
 		"INSERT INTO files (id, path, kind, n_faces) VALUES (1, '/v/a.mp4', 'video', 0), (2, '/v/b.mp4', 'video', 2), (3, '/v/c.mp4', 'video', 0)",
 		`INSERT INTO speech (file_id, t_start, t_end, text, low) VALUES
 			(1, 0, 2, 'Несите торт со свечами!', 'несите торт со свечами!'),
-			(2, 0, 2, 'Где торты?', 'где торты?'), (2, 3, 4, 'Торт уже тут, ёлка тоже', 'торт уже тут, елка тоже'),
+			(2, 0.5, 2, 'Где торты?', 'где торты?'), (2, 3, 4, 'Торт уже тут, ёлка тоже', 'торт уже тут, елка тоже'),
 			(3, 0, 1, 'Тортик', 'тортик')`,
 	} {
 		if _, err := d.Exec(q); err != nil {
@@ -50,7 +50,7 @@ func TestSearchSpeech(t *testing.T) {
 	if code != 200 || len(r.Items) != 3 || r.Items[0].ID != 2 {   // b.mp4 says it twice
 		t.Fatalf("торт: %d %v", code, ids(r))
 	}
-	if r.Items[0].Note != `в речи: "Где торты?"` {
+	if r.Items[0].Note != `в речи: "Где торты?"` || r.Items[0].At != 0.5 {
 		t.Errorf("note %q", r.Items[0].Note)
 	}
 	if _, r = get("/api/search?q=%D1%81%D0%B2%D0%B5%D1%87%D0%B8+%D1%82%D0%BE%D1%80%D1%82"); len(r.Items) != 1 || r.Items[0].ID != 1 { // "свечи торт": every word

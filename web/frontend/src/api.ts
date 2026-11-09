@@ -14,6 +14,7 @@ export interface Item {
   head?: string // group header, on the first item of a group
   face?: number // show this face instead of the whole frame
   note?: string // a page-specific first caption line (rank in a stack, search score...)
+  at?: number // found by what is said: the phrase starts here, seconds
 }
 
 export interface Person {
