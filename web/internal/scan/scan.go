@@ -298,6 +298,9 @@ func refreshPersonStats(db interface {
 	if err == nil {
 		_, err = db.Exec("DELETE FROM persons WHERE n_faces = 0 AND n_voices = 0 AND name IS NULL")
 	}
+	if err == nil { // voice_not_person has no FK to persons: marks of people gone would hit a reused id
+		_, err = db.Exec("DELETE FROM voice_not_person WHERE person_id NOT IN (SELECT id FROM persons)")
+	}
 	return err
 }
 

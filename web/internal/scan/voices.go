@@ -19,8 +19,10 @@ func DefaultVoiceOptions() VoiceOptions {
 
 // ClusterVoices groups voices of the archive like faces and links each group to a person: the person most manual
 // voices of the group have, else the person its voices had before (stable ids), else a suggestion by faces
-// ("Петя?", no person yet), else a new unnamed person if the group is heard in MinFiles files. Manual voices
-// keep their person, "different" pairs are never linked, "not his voice" marks are respected.
+// ("Петя?", no person yet), else a new unnamed person if the group is heard in MinFiles files. A group whose person
+// is automatic and unnamed gets a suggestion too. Manual voices keep their person, automatic voices of a named
+// person stay with it (people are never merged by the program), "different" pairs are never linked,
+// "not his voice" marks are respected.
 func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 	var model string
 	err := db.QueryRow(`SELECT model FROM voices WHERE emb IS NOT NULL
@@ -55,7 +57,9 @@ func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 			p = pid.Int64
 		}
 		ids, files, oldPID, manual = append(ids, id), append(files, file), append(oldPID, p), append(manual, man)
-		E = append(E, Vectors(emb, len(emb)/2)[0])
+		v := Vectors(emb, len(emb)/2)[0]
+		normalize(v)
+		E = append(E, v)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -99,6 +103,11 @@ func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 	}
 	sort.Ints(order)
 
+	named := map[int64]bool{}
+	if err := eachPair(db, "SELECT id, 0 FROM persons WHERE name IS NOT NULL", func(p, _ int64) { named[p] = true }); err != nil {
+		return err
+	}
+
 	// 2) videos for a suggestion: one voice with a vector and exactly one named person in the frame
 	oneVoice := map[int64]bool{}
 	if err := eachPair(db, "SELECT file_id, 0 FROM voices WHERE emb IS NOT NULL GROUP BY file_id HAVING COUNT(*) = 1",
@@ -110,6 +119,33 @@ func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 		WHERE p.name IS NOT NULL GROUP BY x.file_id HAVING COUNT(DISTINCT x.person_id) = 1`,
 		func(f, p int64) { oneFace[f] = p }); err != nil {
 		return err
+	}
+	// suggestFor: the named person seen alone in the group's one-voice videos often enough, or -1;
+	// a video whose voice the user marked "not his voice" for that person does not count
+	suggestFor := func(members []int) int64 {
+		seen := map[int64]bool{}
+		count := map[int64]int{}
+		total := 0
+		for _, m := range members {
+			f := files[m]
+			p, ok := oneFace[f]
+			if seen[f] || !oneVoice[f] || !ok || notPerson[[2]int64{ids[m], p}] {
+				continue
+			}
+			seen[f] = true
+			count[p]++
+			total++
+		}
+		best, bn := int64(-1), 0
+		for p, c := range count {
+			if c > bn || c == bn && p < best {
+				best, bn = p, c
+			}
+		}
+		if bn >= o.SuggestMin && float64(bn) >= o.SuggestShare*float64(total) {
+			return best
+		}
+		return -1
 	}
 
 	tx, err := db.Begin()
@@ -139,10 +175,13 @@ func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 		pid := majority(members, func(m int) int64 { return pick(manual[m], oldPID[m]) })
 		if pid < 0 {
 			pid = majority(members, func(m int) int64 { return pick(!manual[m], oldPID[m]) })
+			if pid >= 0 && !named[pid] {
+				suggest = suggestFor(members)
+			}
 		}
 		if pid < 0 {
 			// a suggestion is a question to the user, not a person: a stranger's voice is never glued to someone
-			suggest = suggestFor(members, files, oneVoice, oneFace, o)
+			suggest = suggestFor(members)
 			fs := map[int64]bool{}
 			for _, m := range members {
 				fs[files[m]] = true
@@ -165,11 +204,15 @@ func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 				continue
 			}
 			var p, s any
-			if pid >= 0 && !notPerson[[2]int64{ids[m], pid}] {
-				p = pid
-			}
-			if suggest >= 0 && !notPerson[[2]int64{ids[m], suggest}] {
-				s = suggest
+			if old := oldPID[m]; old >= 0 && old != pid && named[old] && !notPerson[[2]int64{ids[m], old}] {
+				p = old // a named person keeps its voice; joining two people is the user's call
+			} else {
+				if pid >= 0 && !notPerson[[2]int64{ids[m], pid}] {
+					p = pid
+				}
+				if suggest >= 0 && !notPerson[[2]int64{ids[m], suggest}] {
+					s = suggest
+				}
 			}
 			if _, err := upd.Exec(l, p, s, ids[m]); err != nil {
 				return err
@@ -202,33 +245,6 @@ func majority(members []int, person func(int) int64) int64 {
 		}
 	}
 	return best
-}
-
-// suggestFor: the named person seen alone in the group's one-voice videos often enough, or -1.
-func suggestFor(members []int, files []int64, oneVoice map[int64]bool, oneFace map[int64]int64, o VoiceOptions) int64 {
-	seen := map[int64]bool{}
-	count := map[int64]int{}
-	total := 0
-	for _, m := range members {
-		f := files[m]
-		p, ok := oneFace[f]
-		if seen[f] || !oneVoice[f] || !ok {
-			continue
-		}
-		seen[f] = true
-		count[p]++
-		total++
-	}
-	best, bn := int64(-1), 0
-	for p, c := range count {
-		if c > bn || c == bn && p < best {
-			best, bn = p, c
-		}
-	}
-	if bn >= o.SuggestMin && float64(bn) >= o.SuggestShare*float64(total) {
-		return best
-	}
-	return -1
 }
 
 // eachPair runs f on every row of a two-integer query.

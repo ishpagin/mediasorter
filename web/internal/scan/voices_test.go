@@ -134,9 +134,60 @@ func TestSuggestVoice(t *testing.T) {
 	if err := ClusterVoices(d, testVoiceOptions()); err != nil {
 		t.Fatal(err)
 	}
+	ra, rb := voiceOf(t, d, a), voiceOf(t, d, b)
+	if ra.suggest.Valid || rb.suggest.Valid || !ra.person.Valid || rb.person != ra.person || ra.person.Int64 == 1 {
+		t.Fatalf("rejected suggestion: want one new unnamed person, no suggestion: %+v %+v", ra, rb)
+	}
+
+	// an automatic unnamed person keeps its voices and still gets a suggestion; marks of a gone person are dropped
+	mustExec(t, d, "DELETE FROM voice_not_person")
+	mustExec(t, d, "INSERT INTO voice_not_person (voice_id, person_id) VALUES (?, 999)", a)
+	if err := ClusterVoices(d, testVoiceOptions()); err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []int64{a, b} {
-		if r := voiceOf(t, d, id); r.suggest.Valid {
-			t.Fatalf("voice %d: 'not his voice' still suggested: %+v", id, r)
+		if r := voiceOf(t, d, id); r.person != ra.person || r.suggest.Int64 != 1 {
+			t.Fatalf("voice %d: want its unnamed person %v and Петя?, got %+v", id, ra.person, r)
 		}
+	}
+	var orphans int
+	if err := d.QueryRow("SELECT COUNT(*) FROM voice_not_person").Scan(&orphans); err != nil || orphans != 0 {
+		t.Fatalf("orphan 'not his voice' marks: %d %v", orphans, err)
+	}
+}
+
+// vectors are compared after normalizing: small ones still group
+func TestClusterVoicesUnnormalized(t *testing.T) {
+	d := voicesDB(t, 2)
+	var ids []int64
+	for i, v := range [][]float32{{0.3, 0, 0, 0}, {0.3, 0.03, 0, 0}} {
+		res, err := d.Exec("INSERT INTO voices (file_id, label, seconds, model, emb) VALUES (?, 's1', 10, 'm', ?)", i+1, F16Blob(v))
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := res.LastInsertId()
+		ids = append(ids, id)
+	}
+	if err := ClusterVoices(d, testVoiceOptions()); err != nil {
+		t.Fatal(err)
+	}
+	if r1, r2 := voiceOf(t, d, ids[0]), voiceOf(t, d, ids[1]); r1.cluster != r2.cluster || !r1.person.Valid || r1.person != r2.person {
+		t.Fatalf("unnormalized vectors not grouped: %+v %+v", r1, r2)
+	}
+}
+
+// the program never moves a voice from one named person to another: that would join two people
+func TestNamedAutoStays(t *testing.T) {
+	d := voicesDB(t, 3)
+	mustExec(t, d, "INSERT INTO persons (id, name) VALUES (8, 'Маша'), (20, NULL)")
+	a := voice(t, d, 1, []float32{1, 0, 0, 0}, 20, 0)
+	b := voice(t, d, 2, []float32{0.99, 0.1, 0, 0}, 20, 0)
+	c := voice(t, d, 3, []float32{0.98, 0, 0.1, 0}, 8, 0)
+	if err := ClusterVoices(d, testVoiceOptions()); err != nil {
+		t.Fatal(err)
+	}
+	ra, rb, rc := voiceOf(t, d, a), voiceOf(t, d, b), voiceOf(t, d, c)
+	if ra.cluster != rc.cluster || ra.person.Int64 != 20 || rb.person.Int64 != 20 || rc.person.Int64 != 8 {
+		t.Fatalf("named voice moved: %+v %+v %+v", ra, rb, rc)
 	}
 }

@@ -12,8 +12,8 @@ import (
 )
 
 // rows of a file that a deletion removes (ON DELETE CASCADE) and an undo puts back, in restore order (persons go
-// first): table and the condition on the file id. photosorter._SNAP_TABLES plus speech and voices, so a returned
-// video is not listened to again and keeps the user's voice marks. Tables that do not exist yet are skipped.
+// first): table and the condition on the file id. speech and voices are here so a returned video is not listened
+// to again and keeps the user's voice marks. Tables that do not exist yet are skipped.
 var snapTables = [][2]string{{"files", "id = ?"}, {"faces", "file_id = ?"}, {"previews", "file_id = ?"},
 	{"clip", "file_id = ?"}, {"tags", "file_id = ?"}, {"stacks", "file_id = ?"}, {"quality", "file_id = ?"},
 	{"copies", "file_id = ?"}, {"speech_done", "file_id = ?"}, {"voices", "file_id = ?"},
@@ -165,7 +165,11 @@ func refreshPersonStats(q querier) error {
 		n_files = (SELECT COUNT(DISTINCT file_id) FROM person_media WHERE person_id = persons.id)`); err != nil {
 		return err
 	}
-	_, err := q.Exec("DELETE FROM persons WHERE n_faces = 0 AND n_voices = 0 AND name IS NULL")
+	if _, err := q.Exec("DELETE FROM persons WHERE n_faces = 0 AND n_voices = 0 AND name IS NULL"); err != nil {
+		return err
+	}
+	// voice_not_person has no FK to persons: marks of people gone would hit a reused id
+	_, err := q.Exec("DELETE FROM voice_not_person WHERE person_id NOT IN (SELECT id FROM persons)")
 	return err
 }
 
