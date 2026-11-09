@@ -348,12 +348,12 @@ func TestSaveKeepsVoices(t *testing.T) {
 	r := Result{Model: "m", Segments: []Segment{{Start: 0, End: 5, Text: "раз два", Speaker: "s1"}}, Voices: []Voice{{Label: "s1", Seconds: 5}}}
 	save(d, 1, 7, r, nil)
 	d.Exec("UPDATE voices SET manual = 1")
-	// no voices in the answer: the voice stays, phrases lose their voice_id
-	save(d, 1, 8, Result{Segments: []Segment{{Start: 0, End: 5, Text: "раз два"}}}, nil)
+	// no voices in the answer: the voice stays, phrases keep pointing at the old voice they overlap
+	save(d, 1, 8, Result{Segments: []Segment{{Start: 0, End: 5, Text: "раз два"}, {Start: 7, End: 9, Text: "три"}}}, nil)
 	var n, withVoice int
 	d.QueryRow("SELECT COUNT(*) FROM voices WHERE manual = 1").Scan(&n)
 	d.QueryRow("SELECT COUNT(*) FROM speech WHERE voice_id IS NOT NULL").Scan(&withVoice)
-	if n != 1 || withVoice != 0 {
+	if n != 1 || withVoice != 1 {
 		t.Errorf("no voices answer: voices=%d phrases with voice=%d", n, withVoice)
 	}
 	// a failed recognition touches nothing but speech_done
@@ -363,7 +363,49 @@ func TestSaveKeepsVoices(t *testing.T) {
 	d.QueryRow("SELECT COUNT(*) FROM speech").Scan(&phrases)
 	d.QueryRow("SELECT COUNT(*) FROM voices WHERE manual = 1").Scan(&n)
 	d.QueryRow("SELECT error FROM speech_done WHERE file_id = 1").Scan(&msg)
-	if phrases != 1 || n != 1 || msg != "boom" {
+	if phrases != 2 || n != 1 || msg != "boom" {
 		t.Errorf("failed: phrases=%d voices=%d err=%q", phrases, n, msg)
+	}
+}
+
+// A manual mark survives voices -> no voices -> voices again.
+func TestKeepThenInherit(t *testing.T) {
+	d := voiceDB(t)
+	d.Exec("INSERT INTO persons (id, name) VALUES (5, 'Анна')")
+	r := Result{Model: "m", Segments: []Segment{{Start: 0, End: 10, Text: "раз два", Speaker: "s1"}}, Voices: []Voice{{Label: "s1", Seconds: 10}}}
+	save(d, 1, 7, r, nil)
+	d.Exec("UPDATE voices SET person_id = 5, manual = 1")
+	if err := save(d, 1, 8, Result{Segments: []Segment{{Start: 0, End: 10, Text: "раз два"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	r.Voices[0].Label, r.Segments[0].Speaker = "s9", "s9"
+	if err := save(d, 1, 9, r, nil); err != nil {
+		t.Fatal(err)
+	}
+	var person sql.NullInt64
+	var manual, n int
+	d.QueryRow("SELECT COUNT(*) FROM voices").Scan(&n)
+	d.QueryRow("SELECT person_id, manual FROM voices WHERE label = 's9'").Scan(&person, &manual)
+	if n != 1 || person.Int64 != 5 || manual != 1 {
+		t.Errorf("voices=%d person=%v manual=%d", n, person, manual)
+	}
+}
+
+// Voices in the answer but no phrase names any of them: same as no voices, the old ones and marks stay.
+func TestVoicesWithoutPhrasesKeep(t *testing.T) {
+	d := voiceDB(t)
+	d.Exec("INSERT INTO persons (id, name) VALUES (5, 'Анна'), (6, 'Борис')")
+	save(d, 1, 7, Result{Model: "m", Segments: []Segment{{Start: 0, End: 10, Text: "раз два", Speaker: "s1"}}, Voices: []Voice{{Label: "s1", Seconds: 10}}}, nil)
+	d.Exec("UPDATE voices SET person_id = 5, manual = 1")
+	d.Exec("INSERT INTO voice_not_person SELECT id, 6 FROM voices")
+	if err := save(d, 1, 8, Result{Model: "m", Segments: []Segment{{Start: 0, End: 10, Text: "раз два"}}, Voices: []Voice{{Label: "s1", Seconds: 10}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var n, np, linked int
+	d.QueryRow("SELECT COUNT(*) FROM voices WHERE person_id = 5 AND manual = 1").Scan(&n)
+	d.QueryRow("SELECT COUNT(*) FROM voice_not_person").Scan(&np)
+	d.QueryRow("SELECT COUNT(*) FROM speech WHERE voice_id IS NOT NULL").Scan(&linked)
+	if n != 1 || np != 1 || linked != 1 {
+		t.Errorf("voices=%d not_person=%d linked phrases=%d", n, np, linked)
 	}
 }

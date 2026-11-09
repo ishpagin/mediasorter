@@ -41,13 +41,15 @@ func MergePersons(db *sql.DB, ids []int64) error {
 	for _, u := range []string{
 		"UPDATE voices SET person_id = ? WHERE person_id IN (" + q + ")",
 		"UPDATE voices SET suggest_id = ? WHERE suggest_id IN (" + q + ")",
-		"UPDATE OR IGNORE voice_not_person SET person_id = ? WHERE person_id IN (" + q + ")",
+		// a voice that now belongs to the target can't also be "not the target's": that mark is dropped below
+		"UPDATE OR IGNORE voice_not_person SET person_id = ?1 WHERE person_id IN (" + q + ")" +
+			" AND voice_id NOT IN (SELECT id FROM voices WHERE person_id = ?1)",
 	} {
 		if _, err := tx.Exec(u, append([]any{target}, anys(others)...)...); err != nil {
 			return err
 		}
 	}
-	// "not his voice" marks the target already had for the same voice
+	// "not his voice" marks the target already had for the same voice, and marks on the target's own voices
 	if _, err := tx.Exec("DELETE FROM voice_not_person WHERE person_id IN ("+q+")", anys(others)...); err != nil {
 		return err
 	}

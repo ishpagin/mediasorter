@@ -346,6 +346,23 @@ func TestMergeMovesVoices(t *testing.T) {
 	}
 }
 
+// A voice of the target marked "not the merged person's" does not become "not the target's".
+func TestMergeDropsContradictingMark(t *testing.T) {
+	e := setup(t)
+	e.file("Photos/a.jpg", 1) // faces: Петя (1) and unnamed 101
+	_, err := e.db.Exec(`INSERT INTO voices (id, file_id, label, seconds, model, person_id, manual)
+		VALUES (1, 1, 's1', 10, 'm', 1, 1), (2, 1, 's2', 10, 'm', NULL, 0)`)
+	must(t, err)
+	_, err = e.db.Exec("INSERT INTO voice_not_person VALUES (1, 101), (2, 101)")
+	must(t, err)
+	must(t, MergePersons(e.db, []int64{1, 101}))
+	if e.count("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = 1") != 0 ||
+		e.count("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = 2 AND person_id = 1") != 1 ||
+		e.count("SELECT COUNT(*) FROM voices WHERE id = 1 AND person_id = 1 AND manual = 1") != 1 {
+		t.Fatal("merge: a mark on the target's own voice is dropped, the others move")
+	}
+}
+
 func TestTrashKeepsVoices(t *testing.T) {
 	e := setup(t)
 	a := e.file("Photos/a.jpg", 1)

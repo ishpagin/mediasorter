@@ -2,6 +2,7 @@ package scan
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -189,5 +190,25 @@ func TestNamedAutoStays(t *testing.T) {
 	ra, rb, rc := voiceOf(t, d, a), voiceOf(t, d, b), voiceOf(t, d, c)
 	if ra.cluster != rc.cluster || ra.person.Int64 != 20 || rb.person.Int64 != 20 || rc.person.Int64 != 8 {
 		t.Fatalf("named voice moved: %+v %+v %+v", ra, rb, rc)
+	}
+}
+
+// The user marks a voice while ClusterVoices runs: a trigger turns it manual on the write step's first
+// update, after the voices were read as automatic. The mark must not be overwritten.
+func TestClusterVoicesManualMidway(t *testing.T) {
+	d := voicesDB(t, 3)
+	mustExec(t, d, "INSERT INTO persons (id, name) VALUES (9, 'Вера')")
+	a1 := voice(t, d, 1, []float32{1, 0, 0, 0}, nil, 0)
+	voice(t, d, 2, []float32{0.99, 0.1, 0, 0}, nil, 0)
+	voice(t, d, 3, []float32{0.98, 0, 0.1, 0}, nil, 0)
+	mustExec(t, d, fmt.Sprintf(`CREATE TRIGGER mark AFTER UPDATE ON voices WHEN OLD.id = %d AND NEW.manual = 0 AND NEW.cluster IS NULL
+		BEGIN UPDATE voices SET person_id = 9, manual = 1 WHERE id = OLD.id; END`, a1))
+	if err := ClusterVoices(d, testVoiceOptions()); err != nil {
+		t.Fatal(err)
+	}
+	var manual int
+	d.QueryRow("SELECT manual FROM voices WHERE id = ?", a1).Scan(&manual)
+	if r := voiceOf(t, d, a1); r.person.Int64 != 9 || manual != 1 || r.suggest.Valid {
+		t.Fatalf("manual mark overwritten: %+v manual=%d", r, manual)
 	}
 }

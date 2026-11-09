@@ -414,20 +414,6 @@ func save(d *sql.DB, id, mtime int64, r Result, failed error) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec("DELETE FROM speech WHERE file_id = ?", id); err != nil {
-		return err
-	}
-	if len(r.Voices) > 0 { // no voices in the answer (local model, old asr): the old ones and their marks stay
-		if _, err := tx.Exec("DELETE FROM voices WHERE file_id = ?", id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`DELETE FROM voice_not_same WHERE a NOT IN (SELECT id FROM voices) OR b NOT IN (SELECT id FROM voices)`); err != nil {
-			return err
-		}
-	} else {
-		olds, notPerson, notSame = nil, nil, nil
-	}
-
 	ivs := map[string][][2]float64{} // new voice label -> its phrases
 	for _, s := range r.Segments {
 		if s.Speaker != "" {
@@ -445,6 +431,34 @@ func save(d *sql.DB, id, mtime int64, r Result, failed error) error {
 		oids = append(oids, oid)
 	}
 	slices.Sort(oids)
+	// keepOld: no usable voices in the answer (local model, old asr, labels on no phrase), so the old voices
+	// and their marks stay, and each phrase points at the old voice it overlaps most, for later passes to inherit.
+	keepOld := func(s Segment) any {
+		var vid any
+		best := 0.0
+		for _, oid := range oids {
+			sum := 0.0
+			for _, a := range olds[oid].segs {
+				sum += max(0, min(a[1], s.End)-max(a[0], s.Start))
+			}
+			if sum > best {
+				vid, best = oid, sum
+			}
+		}
+		return vid
+	}
+
+	if _, err := tx.Exec("DELETE FROM speech WHERE file_id = ?", id); err != nil {
+		return err
+	}
+	if len(vs) > 0 {
+		if _, err := tx.Exec("DELETE FROM voices WHERE file_id = ?", id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM voice_not_same WHERE a NOT IN (SELECT id FROM voices) OR b NOT IN (SELECT id FROM voices)`); err != nil {
+			return err
+		}
+	}
 	// Marks pass one to one: an old voice goes to the new voice it overlaps most, a new voice takes
 	// the old one with the biggest overlap among those that chose it. Ties: the first in order.
 	ov := func(o *old, label string) (sum float64) {
@@ -525,6 +539,8 @@ func save(d *sql.DB, id, mtime int64, r Result, failed error) error {
 		var vid any
 		if n, ok := ids[s.Speaker]; ok {
 			vid = n
+		} else if len(vs) == 0 {
+			vid = keepOld(s)
 		}
 		if _, err := tx.Exec("INSERT INTO speech (file_id, t_start, t_end, text, low, voice_id) VALUES (?, ?, ?, ?, ?, ?)",
 			id, math.Round(s.Start*100)/100, math.Round(s.End*100)/100, s.Text, Lower(s.Text), vid); err != nil {

@@ -159,7 +159,8 @@ func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 	if _, err := tx.Exec("UPDATE voices SET cluster = NULL WHERE manual = 1"); err != nil {
 		return err
 	}
-	upd, err := tx.Prepare("UPDATE voices SET cluster = ?, person_id = ?, suggest_id = ? WHERE id = ?")
+	// manual = 0 again: the user may have marked the voice after it was read above
+	upd, err := tx.Prepare("UPDATE voices SET cluster = ?, person_id = ?, suggest_id = ? WHERE id = ? AND manual = 0")
 	if err != nil {
 		return err
 	}
