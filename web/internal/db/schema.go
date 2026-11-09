@@ -241,7 +241,10 @@ func Migrate(d *sql.DB) error {
 			}
 		}
 	}
-	return nil
+	// without file+person SQLite picks faces_person for "this person on this file" and walks all their faces per row
+	_, err := d.Exec(`CREATE INDEX IF NOT EXISTS faces_file_person ON faces(file_id, person_id);
+		CREATE INDEX IF NOT EXISTS speech_voice ON speech(voice_id);`)
+	return err
 }
 
 func hasColumn(d *sql.DB, table, col string) (bool, error) {
