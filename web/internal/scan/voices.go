@@ -13,8 +13,10 @@ type VoiceOptions struct {
 	SuggestShare float64 // ... and this share of such videos of the group
 }
 
+// DefaultVoiceOptions: Thr from asr's measurements on WeSpeaker ResNet34-LM means of 8 s+ of speech: one person
+// in two videos 0.877, 26 pairs of different people 0.035-0.518 (median ~0.25). 0.65 stays above all of them.
 func DefaultVoiceOptions() VoiceOptions {
-	return VoiceOptions{Thr: 0.6, MinFiles: 2, SuggestMin: 2, SuggestShare: 0.6}
+	return VoiceOptions{Thr: 0.65, MinFiles: 2, SuggestMin: 2, SuggestShare: 0.6}
 }
 
 // ClusterVoices groups voices of the archive like faces and links each group to a person: the person most manual
