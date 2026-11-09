@@ -411,9 +411,15 @@ func (s *Server) voicePairs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sr.Close()
+	cards := map[int64]Person{} // one person is suggested for hundreds of voices, its best face is a sort over all its faces
 	for _, x := range sugs {
 		v, err1 := s.pick(x.voice, 0)
-		p, err2 := s.personCard(x.person)
+		p, err2 := cards[x.person], error(nil)
+		if p.ID == 0 {
+			if p, err2 = s.personCard(x.person); err2 == nil {
+				cards[x.person] = p
+			}
+		}
 		if err1 == nil && err2 == nil {
 			out.Suggests = append(out.Suggests, sugOut{v, p})
 		}
