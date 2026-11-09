@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ishpagin/mediasorter/web/internal/ml"
+	"github.com/ishpagin/mediasorter/web/internal/speech"
 )
 
 const clipDim = 768 // SigLIP2 ViT-B/16
@@ -95,10 +96,20 @@ func f16(h uint16) float32 {
 }
 
 // GET /api/search?q=&nopeople=1: the files that best match a text (Russian or English), best first.
+// Videos where it is said come first, then the pictures SigLIP2 finds.
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		s.finishList(w, r, nil, FilesResp{}, false)
+		return
+	}
+	cond := ""
+	if r.URL.Query().Get("nopeople") == "1" {
+		cond = " AND n_faces = 0"
+	}
+	spoken, err := s.spoken(q, cond)
+	if err != nil {
+		fail(w, err, 500)
 		return
 	}
 	idx, err := s.clip()
@@ -106,19 +117,48 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	if len(idx.ids) == 0 {
+	if len(idx.ids) == 0 && len(spoken) == 0 {
 		http.Error(w, "векторы картинок ещё не посчитаны (scenes.py embed)", http.StatusConflict)
 		return
 	}
-	vec, err := s.ML.EmbedText(q)
-	if err != nil {
-		code := 500
-		if err == ml.ErrUnavailable {
-			code = http.StatusServiceUnavailable
+	var got []Item
+	if len(idx.ids) > 0 {
+		vec, err := s.ML.EmbedText(q)
+		if err != nil && len(spoken) == 0 {
+			code := 500
+			if err == ml.ErrUnavailable {
+				code = http.StatusServiceUnavailable
+			}
+			http.Error(w, err.Error(), code)
+			return
 		}
-		http.Error(w, err.Error(), code)
+		if err == nil {
+			if got, err = s.pictures(idx, vec, cond); err != nil {
+				fail(w, err, 500)
+				return
+			}
+		}
+	}
+	if len(spoken) == 0 {
+		s.finishList(w, r, got, FilesResp{}, false)
 		return
 	}
+	// found by speech: videos even with videos hidden in the sidebar (the pictures part still hides them)
+	seen := map[int64]bool{}
+	for _, it := range spoken {
+		seen[it.ID] = true
+	}
+	keepVideo := r.URL.Query().Get("video") == "1"
+	for _, it := range got {
+		if !seen[it.ID] && (keepVideo || it.Kind != "video") {
+			spoken = append(spoken, it)
+		}
+	}
+	s.finishList(w, r, spoken, FilesResp{}, true)
+}
+
+// pictures: the files closest to a text vector (at most 600), best first.
+func (s *Server) pictures(idx *clipIndex, vec []float32, cond string) ([]Item, error) {
 	type hit struct {
 		id    int64
 		score float32
@@ -142,21 +182,75 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		ids[i] = h.id
 		score[h.id] = h.score
 	}
-	cond := ""
-	if r.URL.Query().Get("nopeople") == "1" {
-		cond = " AND n_faces = 0"
-	}
 	got, err := s.queryItems(`SELECT id, path, kind, COALESCE(taken_at, ''), COALESCE(place, ''), '', 0
 		FROM files WHERE id IN (`+ph(len(ids))+`)`+cond, anys(ids)...)
 	if err != nil {
-		fail(w, err, 500)
-		return
+		return nil, err
 	}
 	sort.Slice(got, func(i, j int) bool { return score[got[i].ID] > score[got[j].ID] })
 	for i := range got {
 		got[i].Note = fmt.Sprintf("совпадение %.3f", score[got[i].ID])
 	}
-	s.finishList(w, r, got, FilesResp{}, false)
+	return got, nil
+}
+
+// spoken: videos with a phrase that has every word of q (as a part of a word: "торт" finds "торта"),
+// most such phrases first; Note = the first of them.
+func (s *Server) spoken(q, cond string) ([]Item, error) {
+	var where []string
+	var args []any
+	for _, w := range strings.Fields(speech.Lower(q)) {
+		r := []rune(strings.Trim(w, `.,!?:;"()`))
+		if len(r) < 2 {
+			continue
+		}
+		// shortcut: a crude stem (a last vowel off a long word: "свечи" finds "свечами"), a real stemmer if it falls short
+		if len(r) > 4 && strings.ContainsRune("аеиоуыэюяйь", r[len(r)-1]) {
+			r = r[:len(r)-1]
+		}
+		w = string(r)
+		where = append(where, `s.low LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(w)+"%")
+	}
+	if len(where) == 0 {
+		return nil, nil
+	}
+	rows, err := s.DB.Query(`SELECT s.file_id, s.text FROM speech s JOIN files f ON f.id = s.file_id
+		WHERE `+strings.Join(where, " AND ")+cond+` ORDER BY s.file_id, s.t_start`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	first, n := map[int64]string{}, map[int64]int{}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			return nil, err
+		}
+		if n[id] == 0 {
+			ids, first[id] = append(ids, id), text
+		}
+		n[id]++
+	}
+	if err := rows.Err(); err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	got, err := s.queryItems(`SELECT id, path, kind, COALESCE(taken_at, ''), COALESCE(place, ''), '', 0
+		FROM files WHERE id IN (`+ph(len(ids))+`)`, anys(ids)...)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(got, func(i, j int) bool { return n[got[i].ID] > n[got[j].ID] })
+	for i := range got {
+		t := []rune(first[got[i].ID])
+		if len(t) > 90 {
+			t = append(t[:90], '…')
+		}
+		got[i].Note = `в речи: "` + string(t) + `"`
+	}
+	return got, nil
 }
 
 // GET /api/jobs: the long job on the Python side; POST {name}: start one.

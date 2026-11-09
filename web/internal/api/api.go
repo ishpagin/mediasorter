@@ -68,6 +68,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/similar", s.similar)
 	mux.HandleFunc("POST /api/notsame", s.notSame)
 	mux.HandleFunc("GET /api/search", s.search)
+	mux.HandleFunc("GET /api/speech", s.speech)
 	mux.HandleFunc("GET /api/stacks", s.stacks)
 	mux.HandleFunc("GET /api/copies", s.copies)
 	mux.HandleFunc("GET /api/jobs", s.jobs)

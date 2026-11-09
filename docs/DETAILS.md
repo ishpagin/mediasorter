@@ -21,6 +21,7 @@ ONNX Runtime, видео через ffmpeg). Есть два способа за
 | `internal/vision` | ONNX Runtime: SCRFD (лица) + ArcFace (векторы лиц), SigLIP2 (картинки и текст) + BPE-токенизатор Gemma; операции с картинками как в OpenCV (INTER_AREA / CUBIC, warpAffine); `ljpeg` — JPEG-кодировщик, дающий те же байты, что libjpeg |
 | `internal/media` | чтение файлов: JPEG (цвет как у libjpeg), HEIC, встроенные превью RAW, PNG/WebP/GIF/BMP/TIFF; EXIF; кадры видео через ffmpeg |
 | `internal/scan` | сканирование, люди (кластеризация), сюжеты, стопки и копии, качество, места по GPS |
+| `internal/speech` | речь в видео: звук через ffmpeg, куски до 30 с по паузам, GigaAM v3 (`vision.Speech`) или общий сервис `MS_ASR_URL`; фразы с временем в таблице `speech` |
 | `internal/engine` | одна долгая задача за раз (сканирование, пересчёт людей, стопки…), прогресс для интерфейса, ленивая загрузка текстовой модели |
 | `internal/api`, `internal/core` | JSON API интерфейса; удаление и Ctrl+Z, подборки, правка людей |
 | `internal/db` | SQLite (без cgo), схема и миграции старых баз |

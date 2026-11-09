@@ -6,6 +6,7 @@ import { Search } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import ListView from '@/components/ListView.vue'
+import SpeechOffer from '@/components/SpeechOffer.vue'
 import { api } from '@/api'
 import { useFileList } from '@/composables/useFileList'
 import { useQuery } from '@/composables/useQuery'
@@ -32,8 +33,9 @@ const { data, loading, error } = useFileList(api.search, () =>
         <Switch :model-value="q('nopeople') === '1'" @update:model-value="(v) => set('nopeople', v)" />Только без людей
       </label>
     </header>
+    <SpeechOffer />
     <div v-if="!q('q')" class="flex flex-col gap-3 px-6 py-8 text-muted-foreground">
-      <p>Опиши словами, что на фото — на русском или английском. Например:</p>
+      <p>Опиши словами, что на фото (на русском или английском) или что говорят в видео. Например:</p>
       <div class="flex flex-wrap gap-2">
         <button v-for="e in examples" :key="e" class="rounded-full border px-3 py-1 text-sm hover:bg-accent hover:text-foreground" @click="text = e">{{ e }}</button>
       </div>

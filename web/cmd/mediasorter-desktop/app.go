@@ -108,12 +108,14 @@ func newApp(dir string) (*App, error) {
 	opt := scan.DefaultOptions()
 	opt.Workers = max(1, min(4, runtime.NumCPU()/2))
 	a.eng = engine.New(engine.Config{
-		DB:      d,
-		Models:  a.modelsDir(),
-		ORT:     a.ortPath,
-		Sources: func() []string { return engine.Sources(d, nil) },
-		MapPath: func(p string) string { return p },
-		Scan:    opt,
+		DB:        d,
+		Models:    a.modelsDir(),
+		ORT:       a.ortPath,
+		Sources:   func() []string { return engine.Sources(d, nil) },
+		MapPath:   func(p string) string { return p },
+		Scan:      opt,
+		ASR:       os.Getenv("MS_ASR_URL"),
+		SpeechDir: filepath.Join(a.modelsDir(), "gigaam"),
 	})
 	mux, err := server.Mux(d, cfg, a.eng)
 	if err != nil {

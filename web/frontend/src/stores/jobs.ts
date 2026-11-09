@@ -6,7 +6,7 @@ import { useActions } from './actions'
 
 const LABELS: Record<string, string> = {
   scan: 'Разбор фото', cluster: 'Пересчёт кластеров', tag: 'Сюжеты', stacks_build: 'Сборка стопок',
-  stacks_score: 'Оценка качества',
+  stacks_score: 'Оценка качества', speech: 'Распознавание речи', speech_setup: 'Распознавание речи',
 }
 
 // the long job of the analysis (one at a time): start, follow the progress, refresh lists at the end
@@ -28,6 +28,7 @@ export const useJobs = defineStore('jobs', () => {
     if (job.value.error) toast.error(`${label}: ошибка`, { description: job.value.error })
     else if (job.value.name) toast.success(job.value.message || `${label}: готово`)
     actions.version++
+    if (job.value.name?.startsWith('speech')) void actions.loadMeta() // the speech offer goes away
   }
 
   async function start(name: string) {

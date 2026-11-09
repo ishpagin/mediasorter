@@ -126,6 +126,9 @@ func main() {
 		Sources: func() []string { return engine.Sources(d, strings.Fields(os.Getenv("PS_SCAN_SRC"))) },
 		MapPath: cfg.MapToLocal,
 		Scan:    opt,
+		ASR:     os.Getenv("MS_ASR_URL"),
+		// next to the database: the models folder of the Docker image is read-only
+		SpeechDir: env("MS_SPEECH_MODELS", filepath.Join(filepath.Dir(dbPath), "models", "gigaam")),
 	})
 
 	if cmd := flagCmd(); cmd != "serve" {

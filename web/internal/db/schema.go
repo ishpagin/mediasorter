@@ -169,6 +169,20 @@ CREATE TABLE IF NOT EXISTS quality (
     aesthetic  REAL,
     error      TEXT
 );
+
+CREATE TABLE IF NOT EXISTS speech (          -- what is said in videos, phrase by phrase (package speech)
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    t_start REAL NOT NULL,                   -- seconds
+    t_end   REAL NOT NULL,
+    text    TEXT NOT NULL,
+    low     TEXT NOT NULL                    -- lower case, ё as е: what the search compares with
+);
+CREATE INDEX IF NOT EXISTS speech_file ON speech(file_id);
+CREATE TABLE IF NOT EXISTS speech_done (     -- videos already listened to (with no speech too)
+    file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    mtime   INTEGER,                         -- files.mtime then: a changed file is listened to again
+    error   TEXT
+);
 `
 
 // Migrate creates missing tables and adds columns older databases lack.

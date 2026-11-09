@@ -6,6 +6,7 @@ import { MapPin } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import ListView from '@/components/ListView.vue'
+import SpeechOffer from '@/components/SpeechOffer.vue'
 import { api } from '@/api'
 import { useFileList } from '@/composables/useFileList'
 import { useQuery } from '@/composables/useQuery'
@@ -49,6 +50,7 @@ const cats = computed(() => data.value?.cats ?? [])
         <Input v-model="place" placeholder="Место: город или страна" class="h-8 w-60 pl-8" aria-label="Место" />
       </div>
     </header>
+    <SpeechOffer v-if="view === 'videos'" />
     <ListView :data="data" :loading="loading" :error="error" :videos-page="view === 'videos'" />
   </div>
 </template>

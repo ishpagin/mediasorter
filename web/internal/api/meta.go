@@ -1,6 +1,11 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/ishpagin/mediasorter/web/internal/speech"
+)
 
 type Collection struct {
 	ID   int64  `json:"id"`
@@ -12,6 +17,31 @@ type MetaResp struct {
 	Faces       int          `json:"faces"`
 	People      int          `json:"people"`
 	Collections []Collection `json:"collections"` // newest first, like the sidebar
+	Videos      int          `json:"videos"`
+	Speech      string       `json:"speech"` // "remote", "local", "" = off (the model can be downloaded), "none" = not here
+}
+
+// speechMode: see MetaResp.Speech (the Python side has no speech at all).
+func (s *Server) speechMode() string {
+	if m, ok := s.ML.(interface{ SpeechMode() string }); ok {
+		return m.SpeechMode()
+	}
+	return "none"
+}
+
+// GET /api/speech?id=: what is said in a video, phrase by phrase.
+func (s *Server) speech(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "id?", http.StatusBadRequest)
+		return
+	}
+	segs, err := speech.Of(s.DB, id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	writeJSON(w, r, segs)
 }
 
 // meta: GET /api/meta — sidebar numbers and the collections list.
@@ -21,6 +51,11 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM files WHERE kind = 'video'").Scan(&m.Videos); err != nil {
+		fail(w, err, 500)
+		return
+	}
+	m.Speech = s.speechMode()
 	if err := s.DB.QueryRow("SELECT COUNT(*) FROM persons WHERE n_faces > 0").Scan(&m.People); err != nil {
 		fail(w, err, 500)
 		return

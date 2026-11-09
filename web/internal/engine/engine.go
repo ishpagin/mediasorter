@@ -17,6 +17,8 @@ import (
 	"github.com/ishpagin/mediasorter/web/internal/media"
 	"github.com/ishpagin/mediasorter/web/internal/ml"
 	"github.com/ishpagin/mediasorter/web/internal/scan"
+	"github.com/ishpagin/mediasorter/web/internal/setup"
+	"github.com/ishpagin/mediasorter/web/internal/speech"
 	"github.com/ishpagin/mediasorter/web/internal/vision"
 )
 
@@ -28,6 +30,9 @@ type Config struct {
 	Sources func() []string     // folders to scan (read each time: the user may change them)
 	MapPath func(string) string // a stored path -> a path openable here
 	Scan    scan.Options
+
+	ASR       string // MS_ASR_URL: a shared speech service; "" = the model in SpeechDir, once downloaded
+	SpeechDir string // where the speech model is downloaded to (writable)
 }
 
 // Engine: see the package comment.
@@ -116,6 +121,39 @@ var jobNames = map[string]string{
 	"stacks_build": "Стопки",
 	"stacks_score": "Оценка качества",
 	"tag":          "Сюжеты",
+	"speech":       "Распознавание речи",
+	"speech_setup": "Скачивание распознавания речи",
+}
+
+// SpeechMode: "remote" (the shared service), "local" (the downloaded model) or "" (off, can be downloaded).
+func (e *Engine) SpeechMode() string {
+	switch {
+	case e.cfg.ASR != "":
+		return "remote"
+	case e.cfg.SpeechDir != "" && setup.SpeechReady(e.cfg.SpeechDir):
+		return "local"
+	}
+	return ""
+}
+
+// speech: listen to the videos not done yet.
+func (e *Engine) speech(ctx context.Context, p scan.Progress) (string, error) {
+	var rec speech.Recognizer
+	switch e.SpeechMode() {
+	case "remote":
+		rec = speech.Remote(e.cfg.ASR)
+	case "local":
+		m, err := vision.LoadSpeech(e.cfg.SpeechDir)
+		if err != nil {
+			return "", err
+		}
+		defer m.Close()
+		rec = speech.Local(m)
+	default:
+		return "", fmt.Errorf("распознавание речи не скачано")
+	}
+	n, err := speech.Run(ctx, e.cfg.DB, rec, e.cfg.MapPath, p)
+	return fmt.Sprintf("Речь распознана, видео со словами: %d", n), err
 }
 
 // StartJob starts a job ("" = just the status).
@@ -206,6 +244,19 @@ func (e *Engine) run(ctx context.Context, name string) (string, error) {
 		}
 		_, err = scan.Score(ctx, e.cfg.DB, t, e.cfg.MapPath, e.cfg.Scan.Workers*2, e.progress(0, 1))
 		return "Качество оценено", err
+	case "speech":
+		return e.speech(ctx, e.progress(0, 1))
+	case "speech_setup":
+		if e.cfg.ASR == "" {
+			if e.cfg.SpeechDir == "" {
+				return "", fmt.Errorf("распознавание речи здесь не настроено")
+			}
+			p := e.progress(0, 0.2)
+			if err := setup.Speech(ctx, e.cfg.SpeechDir, func(msg string, f float64) { p(int(f*1000), 1000, msg) }); err != nil {
+				return "", err
+			}
+		}
+		return e.speech(ctx, e.progress(0.2, 1))
 	}
 	return "", fmt.Errorf("unknown job")
 }
@@ -280,7 +331,14 @@ func (e *Engine) Nightly(ctx context.Context) (string, error) {
 	e.cfg.DB.Exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_scan', ?)", time.Now().Format(time.RFC3339))
 	b, _ := json.Marshal(srcs)
 	e.cfg.DB.Exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_scan_sources', ?)", string(b))
-	return fmt.Sprintf("Готово: новых или изменённых файлов %d", total), nil
+	msg := fmt.Sprintf("Готово: новых или изменённых файлов %d", total)
+	if e.SpeechMode() != "" { // after last_scan: a speech service that is down must not make every start rescan
+		if _, err := e.speech(ctx, e.progress(0.95, 1)); err != nil {
+			log.Printf("speech: %v", err)
+			msg += "; речь не распознана: " + err.Error()
+		}
+	}
+	return msg, nil
 }
 
 // LastScan: when the last full scan finished (zero = never).

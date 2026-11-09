@@ -72,7 +72,12 @@ export interface Meta {
   faces: number
   people: number
   collections: { id: number; name: string }[]
+  videos: number
+  speech: 'remote' | 'local' | '' | 'none' // '' = off, the model can be downloaded; 'none' = not on this server
 }
+
+// a phrase said in a video, seconds from its start
+export interface Segment { start: number; end: number; text: string }
 
 export interface Failure { path: string; error: string }
 
@@ -165,6 +170,7 @@ export const api = {
   collectionDelete: (id: number) => post<ActionResp>(`/api/collections/${id}`, {}, 'DELETE'),
   job: () => get<Job>('/api/jobs'),
   startJob: (name: string) => post<Job>('/api/jobs', { name }),
+  speech: (id: number) => get<Segment[]>(`/api/speech?id=${id}`),
 }
 
 export const faceUrl = (id: number) => `/thumb/face/${id}`

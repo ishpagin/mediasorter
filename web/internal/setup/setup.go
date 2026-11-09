@@ -21,7 +21,11 @@ import (
 const (
 	buffalo = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
 	siglip  = "https://huggingface.co/immich-app/ViT-B-16-SigLIP2__webli/resolve/main/"
+	gigaam  = "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/"
 )
+
+// speechFiles: GigaAM v3 e2e CTC int8 (~225 MB), downloaded only when the user turns speech on.
+var speechFiles = []string{"v3_e2e_ctc_vocab.txt", "v3_e2e_ctc.int8.onnx"}
 
 var siglipFiles = []string{"config.json", "visual/model.onnx", "visual/preprocess_cfg.json", "textual/model.onnx",
 	"textual/tokenizer.json", "textual/tokenizer_config.json", "textual/special_tokens_map.json"}
@@ -62,6 +66,29 @@ func ModelsReady(dir string) bool {
 		}
 	}
 	return true
+}
+
+// SpeechReady: the speech model is in dir.
+func SpeechReady(dir string) bool {
+	for _, f := range speechFiles {
+		if !exists(filepath.Join(dir, f)) {
+			return false
+		}
+	}
+	return true
+}
+
+// Speech downloads the speech model into dir.
+func Speech(ctx context.Context, dir string, progress Progress) error {
+	for i, f := range speechFiles {
+		if p := filepath.Join(dir, f); !exists(p) {
+			lo := float64(i) / float64(len(speechFiles))
+			if err := fetch(ctx, gigaam+f, p, scaled(progress, "Распознавание речи: GigaAM v3", lo, lo+1/float64(len(speechFiles)))); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // FFmpegReady: both tools are in dir.

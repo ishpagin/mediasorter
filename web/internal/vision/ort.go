@@ -58,6 +58,19 @@ func NewSession(path string) (*Session, error) {
 	return nil, fmt.Errorf("%s: no execution provider", path)
 }
 
+// OpenCPU: a session on the CPU only (int8 models: made for the CPU, GPU providers choke on them).
+func OpenCPU(path string) (*Session, error) {
+	in, out, err := ort.GetInputOutputInfo(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	s := &Session{In: in, Out: out, path: path}
+	if err := s.open("cpu"); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return s, nil
+}
+
 func names(l []ort.InputOutputInfo) []string {
 	s := make([]string, len(l))
 	for i, x := range l {
@@ -152,12 +165,17 @@ func (s *Session) Run(inputs ...ort.Value) ([][]float32, [][]int64, error) {
 	data := make([][]float32, len(outs))
 	shapes := make([][]int64, len(outs))
 	for i, v := range outs {
-		t, ok := v.(*ort.Tensor[float32])
-		if !ok {
-			return nil, nil, fmt.Errorf("output %d is not float32", i)
+		switch t := v.(type) {
+		case *ort.Tensor[float32]:
+			data[i], shapes[i] = append([]float32(nil), t.GetData()...), t.GetShape()
+		case *ort.Tensor[int64]: // lengths and the like: small integers, exact as float32
+			for _, x := range t.GetData() {
+				data[i] = append(data[i], float32(x))
+			}
+			shapes[i] = t.GetShape()
+		default:
+			return nil, nil, fmt.Errorf("output %d is not float32 or int64", i)
 		}
-		data[i] = append([]float32(nil), t.GetData()...)
-		shapes[i] = t.GetShape()
 		v.Destroy()
 	}
 	return data, shapes, nil
