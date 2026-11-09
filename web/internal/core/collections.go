@@ -140,7 +140,7 @@ func (c *Config) AddFiles(db *sql.DB, cid int64, fids []int64, copy bool) (int, 
 func (c *Config) ByPeople(db *sql.DB, fids []int64, copy bool) (map[string]int, []int64, []Failure, []Pair) {
 	perPerson, nobody, failed, added := map[string]int{}, []int64{}, []Failure{}, []Pair{}
 	for _, fid := range fids {
-		rows, err := db.Query(`SELECT DISTINCT p.id, p.name FROM faces f JOIN persons p ON p.id = f.person_id
+		rows, err := db.Query(`SELECT DISTINCT p.id, p.name FROM person_media f JOIN persons p ON p.id = f.person_id
 			WHERE f.file_id = ? AND p.name IS NOT NULL AND p.skip_collect = 0 ORDER BY p.name`, fid)
 		if err != nil {
 			failed = append(failed, Failure{fileName(db, fid), err.Error()})

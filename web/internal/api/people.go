@@ -82,12 +82,12 @@ func (s *Server) persons(w http.ResponseWriter, r *http.Request) {
 		hidden = 1
 	}
 	rows, err := s.DB.Query(`WITH pc AS (
-		SELECT x.person_id AS pid, COUNT(DISTINCT x.file_id) AS n FROM faces x JOIN files f ON f.id = x.file_id
+		SELECT x.person_id AS pid, COUNT(DISTINCT x.file_id) AS n FROM person_media x JOIN files f ON f.id = x.file_id
 		WHERE x.person_id IS NOT NULL `+kind+` GROUP BY x.person_id)
 		SELECT p.id, p.name, pc.n,
 		       COALESCE((SELECT id FROM faces WHERE person_id = p.id AND thumb IS NOT NULL ORDER BY size * det_score DESC LIMIT 1), 0),
 		       COALESCE((SELECT substr(MIN(f.taken_at), 1, 4) || '–' || substr(MAX(f.taken_at), 1, 4)
-		                 FROM faces x JOIN files f ON f.id = x.file_id WHERE x.person_id = p.id), '')
+		                 FROM person_media x JOIN files f ON f.id = x.file_id WHERE x.person_id = p.id), '')
 		FROM persons p JOIN pc ON pc.pid = p.id WHERE pc.n >= ? AND p.hidden = ? ORDER BY pc.n DESC, p.id`, min, hidden)
 	if err != nil {
 		fail(w, err, 500)
@@ -114,7 +114,7 @@ func (s *Server) persons(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/persons/all: every person with faces (for "who is this" pickers): named first, then by files.
 func (s *Server) personsAll(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.DB.Query(`SELECT id, name, n_files FROM persons WHERE n_faces > 0
+	rows, err := s.DB.Query(`SELECT id, name, n_files FROM persons WHERE n_faces > 0 OR n_voices > 0
 		ORDER BY name IS NULL, lower(name), n_files DESC`)
 	if err != nil {
 		fail(w, err, 500)
@@ -257,8 +257,8 @@ func (s *Server) person(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Name = name.String
-	rows, err := s.DB.Query(`SELECT p.id, p.name, COUNT(DISTINCT x.file_id) FROM faces x JOIN persons p ON p.id = x.person_id
-		WHERE x.file_id IN (SELECT file_id FROM faces WHERE person_id = ?) AND p.id != ? GROUP BY p.id ORDER BY 3 DESC`, id, id)
+	rows, err := s.DB.Query(`SELECT p.id, p.name, COUNT(DISTINCT x.file_id) FROM person_media x JOIN persons p ON p.id = x.person_id
+		WHERE x.file_id IN (SELECT file_id FROM person_media WHERE person_id = ?) AND p.id != ? GROUP BY p.id ORDER BY 3 DESC`, id, id)
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -296,7 +296,7 @@ func (s *Server) personFiles(w http.ResponseWriter, r *http.Request) {
 		having = ""
 	}
 	with := idList(q.Get("with"))
-	cond := strings.Repeat(" AND f.id IN (SELECT file_id FROM faces WHERE person_id = ?)", len(with))
+	cond := strings.Repeat(" AND f.id IN (SELECT file_id FROM person_media WHERE person_id = ?)", len(with))
 	face := "(SELECT t.id FROM faces t WHERE t.file_id = f.id AND t.person_id = fa.person_id ORDER BY t.size DESC LIMIT 1)"
 	if q.Get("whole") != "0" {
 		face = "0"
@@ -311,7 +311,7 @@ func (s *Server) personFiles(w http.ResponseWriter, r *http.Request) {
 		       (SELECT COUNT(DISTINCT person_id) FROM faces WHERE file_id = f.id AND person_id IS NOT NULL AND person_id != fa.person_id) AS others,
 		       (SELECT COUNT(*) FROM faces WHERE file_id = f.id AND (person_id IS NULL OR person_id != fa.person_id)) AS foreign_faces,
 		       f.taken_at AS t0
-		FROM faces fa JOIN files f ON f.id = fa.file_id
+		FROM person_media fa JOIN files f ON f.id = fa.file_id
 		WHERE fa.person_id = ?`+cond+` GROUP BY f.id `+having+`) ORDER BY t0, path`,
 		append([]any{id}, anys(with)...)...)
 	if err != nil {

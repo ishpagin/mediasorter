@@ -49,7 +49,7 @@ async function go(target: { collection?: number; person?: number; new?: string }
       </div>
 
       <section v-if="people.length" class="flex flex-col gap-2">
-        <h4 class="text-sm font-medium">Люди на фото — в подборку человека (создаётся сама)</h4>
+        <h4 class="text-sm font-medium">Люди в медиа — в подборку человека (создаётся сама)</h4>
         <div class="flex flex-wrap gap-2">
           <Button v-for="p in people" :key="p.id" variant="outline" size="sm" @click="go({ person: p.id })">
             <User />{{ p.name }}<span v-if="ids.length > 1" class="text-muted-foreground">{{ p.n }}/{{ ids.length }}</span>

@@ -56,7 +56,7 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.Speech = s.speechMode()
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM persons WHERE n_faces > 0").Scan(&m.People); err != nil {
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM persons WHERE n_faces > 0 OR n_voices > 0").Scan(&m.People); err != nil {
 		fail(w, err, 500)
 		return
 	}

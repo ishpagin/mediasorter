@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useIntersectionObserver, watchDebounced } from '@vueuse/core'
 import { toast } from 'vue-sonner'
-import { Eye, EyeOff, Merge, Search, UserPlus } from '@lucide/vue'
+import { Eye, EyeOff, Merge, Mic, Search, UserPlus } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -108,7 +108,7 @@ function onlyThem() {
           <RouterLink :to="{ path: '/person', query: { id: p.id } }" class="block overflow-hidden rounded-lg bg-muted">
             <img v-if="p.face" :src="faceUrl(p.face)" alt="" loading="lazy"
                  class="aspect-square w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
-            <div v-else class="aspect-square" />
+            <div v-else class="flex aspect-square items-center justify-center text-muted-foreground"><Mic class="size-8" /></div>
           </RouterLink>
           <Input v-model="names[p.id]" :placeholder="`person_${p.id}`" class="h-8" aria-label="Имя"
                  @keydown.enter="($event.target as HTMLInputElement).blur()" @blur="saveName(p)" />

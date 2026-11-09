@@ -131,7 +131,7 @@ func (s *Server) collectPeople(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []person{}
 	if len(args) > 0 {
-		rows, err := s.DB.Query(`SELECT p.id, p.name, COUNT(DISTINCT x.file_id) FROM faces x JOIN persons p ON p.id = x.person_id
+		rows, err := s.DB.Query(`SELECT p.id, p.name, COUNT(DISTINCT x.file_id) FROM person_media x JOIN persons p ON p.id = x.person_id
 			WHERE x.file_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+`) AND p.name IS NOT NULL
 			GROUP BY p.id ORDER BY 3 DESC, lower(p.name)`, args...)
 		if err != nil {

@@ -202,7 +202,10 @@ func (s *Server) peopleIn() (map[int64]string, error) {
 		FROM (SELECT x.file_id, p.name FROM faces x JOIN files f ON f.id = x.file_id
 		      LEFT JOIN persons p ON p.id = x.person_id
 		      WHERE x.person_id IS NOT NULL OR f.kind != 'video'
-		      GROUP BY x.file_id, COALESCE(x.person_id, -x.id)) g
+		      GROUP BY x.file_id, COALESCE(x.person_id, -x.id)
+		      UNION ALL  -- people only heard on the file
+		      SELECT m.file_id, p.name FROM person_media m JOIN persons p ON p.id = m.person_id
+		      WHERE NOT EXISTS (SELECT 1 FROM faces WHERE file_id = m.file_id AND person_id = m.person_id)) g
 		GROUP BY g.file_id`)
 	if err != nil {
 		return nil, err
