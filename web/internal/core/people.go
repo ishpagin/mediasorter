@@ -38,6 +38,19 @@ func MergePersons(db *sql.DB, ids []int64) error {
 	if _, err := tx.Exec("UPDATE faces SET person_id = ? WHERE person_id IN ("+q+")", append([]any{target}, anys(others)...)...); err != nil {
 		return err
 	}
+	for _, u := range []string{
+		"UPDATE voices SET person_id = ? WHERE person_id IN (" + q + ")",
+		"UPDATE voices SET suggest_id = ? WHERE suggest_id IN (" + q + ")",
+		"UPDATE OR IGNORE voice_not_person SET person_id = ? WHERE person_id IN (" + q + ")",
+	} {
+		if _, err := tx.Exec(u, append([]any{target}, anys(others)...)...); err != nil {
+			return err
+		}
+	}
+	// "not his voice" marks the target already had for the same voice
+	if _, err := tx.Exec("DELETE FROM voice_not_person WHERE person_id IN ("+q+")", anys(others)...); err != nil {
+		return err
+	}
 	if _, err := tx.Exec("DELETE FROM persons WHERE id IN ("+q+")", anys(others)...); err != nil {
 		return err
 	}

@@ -267,19 +267,14 @@ func Cluster(db *sql.DB, o ClusterOptions, progress Progress) (int, error) {
 			return 0, err
 		}
 	}
-	if _, err := tx.Exec(`UPDATE persons SET
-		n_faces = (SELECT COUNT(*) FROM faces WHERE person_id = persons.id),
-		n_files = (SELECT COUNT(DISTINCT file_id) FROM faces WHERE person_id = persons.id)`); err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec("DELETE FROM persons WHERE n_faces = 0 AND name IS NULL"); err != nil {
+	if err := refreshPersonStats(tx); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	var people int
-	err = db.QueryRow("SELECT COUNT(*) FROM persons WHERE n_faces > 0").Scan(&people)
+	err = db.QueryRow("SELECT COUNT(*) FROM persons WHERE n_faces > 0 OR n_voices > 0").Scan(&people)
 	logf(progress, 4, 4, "%d people", people)
 	return people, err
 }

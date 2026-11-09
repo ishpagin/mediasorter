@@ -287,12 +287,16 @@ func store(db *sql.DB, t todo, r *Result, errMsg string) error {
 	return tx.Commit()
 }
 
-func refreshPersonStats(db *sql.DB) error {
+// refreshPersonStats: counts of every person (seen or heard); an unnamed person with neither goes.
+func refreshPersonStats(db interface {
+	Exec(string, ...any) (sql.Result, error)
+}) error {
 	_, err := db.Exec(`UPDATE persons SET
 		n_faces = (SELECT COUNT(*) FROM faces WHERE person_id = persons.id),
-		n_files = (SELECT COUNT(DISTINCT file_id) FROM faces WHERE person_id = persons.id)`)
+		n_voices = (SELECT COUNT(*) FROM voices WHERE person_id = persons.id),
+		n_files = (SELECT COUNT(DISTINCT file_id) FROM person_media WHERE person_id = persons.id)`)
 	if err == nil {
-		_, err = db.Exec("DELETE FROM persons WHERE n_faces = 0 AND name IS NULL")
+		_, err = db.Exec("DELETE FROM persons WHERE n_faces = 0 AND n_voices = 0 AND name IS NULL")
 	}
 	return err
 }

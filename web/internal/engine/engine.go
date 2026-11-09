@@ -153,6 +153,9 @@ func (e *Engine) speech(ctx context.Context, p scan.Progress) (string, error) {
 		return "", fmt.Errorf("распознавание речи не скачано")
 	}
 	n, err := speech.Run(ctx, e.cfg.DB, rec, e.cfg.MapPath, p)
+	if err == nil { // after a stop or an error the next run groups the voices
+		err = scan.ClusterVoices(e.cfg.DB, scan.DefaultVoiceOptions())
+	}
 	return fmt.Sprintf("Речь распознана, видео со словами: %d", n), err
 }
 

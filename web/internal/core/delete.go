@@ -11,10 +11,13 @@ import (
 	"time"
 )
 
-// rows of a file that a deletion removes (ON DELETE CASCADE) and an undo puts back; persons go first on restore.
-// Same list as photosorter._SNAP_TABLES. Tables that do not exist yet (no scenes / stacks run) are skipped.
-var snapTables = [][2]string{{"files", "id"}, {"faces", "file_id"}, {"previews", "file_id"}, {"clip", "file_id"},
-	{"tags", "file_id"}, {"stacks", "file_id"}, {"quality", "file_id"}, {"copies", "file_id"}}
+// rows of a file that a deletion removes (ON DELETE CASCADE) and an undo puts back, in restore order (persons go
+// first): table and the condition on the file id. photosorter._SNAP_TABLES plus speech and voices, so a returned
+// video is not listened to again and keeps the user's voice marks. Tables that do not exist yet are skipped.
+var snapTables = [][2]string{{"files", "id = ?"}, {"faces", "file_id = ?"}, {"previews", "file_id = ?"},
+	{"clip", "file_id = ?"}, {"tags", "file_id = ?"}, {"stacks", "file_id = ?"}, {"quality", "file_id = ?"},
+	{"copies", "file_id = ?"}, {"speech_done", "file_id = ?"}, {"voices", "file_id = ?"},
+	{"voice_not_person", "voice_id IN (SELECT id FROM voices WHERE file_id = ?)"}, {"speech", "file_id = ?"}}
 
 type snapTable struct {
 	Cols []string `json:"cols"`
@@ -65,11 +68,12 @@ type querier interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-// takeSnapshot: every row of the file (and the persons of its faces, an unnamed one disappears with its last face).
+// takeSnapshot: every row of the file and the persons seen or heard there (an unnamed one disappears with its last
+// face or voice).
 func takeSnapshot(q querier, fid int64) ([]byte, error) {
 	s := snapshot{V: 1, Tables: map[string]*snapTable{}}
 	for _, tc := range snapTables {
-		t, err := queryTable(q, fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", tc[0], tc[1]), fid)
+		t, err := queryTable(q, fmt.Sprintf("SELECT * FROM %s WHERE %s", tc[0], tc[1]), fid)
 		if err != nil {
 			if strings.Contains(err.Error(), "no such table") {
 				continue
@@ -78,7 +82,8 @@ func takeSnapshot(q querier, fid int64) ([]byte, error) {
 		}
 		s.Tables[tc[0]] = t
 	}
-	t, err := queryTable(q, `SELECT * FROM persons WHERE id IN (SELECT person_id FROM faces WHERE file_id = ? AND person_id IS NOT NULL)`, fid)
+	t, err := queryTable(q, `SELECT * FROM persons WHERE id IN (SELECT person_id FROM person_media WHERE file_id = ?1
+		UNION SELECT suggest_id FROM voices WHERE file_id = ?1)`, fid)
 	if err != nil {
 		return nil, err
 	}
@@ -156,10 +161,11 @@ var errLegacySnapshot = errors.New("старое удаление (до ново
 func refreshPersonStats(q querier) error {
 	if _, err := q.Exec(`UPDATE persons SET
 		n_faces = (SELECT COUNT(*) FROM faces WHERE person_id = persons.id),
-		n_files = (SELECT COUNT(DISTINCT file_id) FROM faces WHERE person_id = persons.id)`); err != nil {
+		n_voices = (SELECT COUNT(*) FROM voices WHERE person_id = persons.id),
+		n_files = (SELECT COUNT(DISTINCT file_id) FROM person_media WHERE person_id = persons.id)`); err != nil {
 		return err
 	}
-	_, err := q.Exec("DELETE FROM persons WHERE n_faces = 0 AND name IS NULL")
+	_, err := q.Exec("DELETE FROM persons WHERE n_faces = 0 AND n_voices = 0 AND name IS NULL")
 	return err
 }
 

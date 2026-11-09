@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ishpagin/mediasorter/web/internal/db"
+	"github.com/ishpagin/mediasorter/web/internal/scan"
 )
 
 // the tables these actions touch, as photosorter.py creates them (FKs cascade like the real DB)
@@ -17,10 +18,21 @@ CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, kind TEXT
   n_faces INTEGER);
 CREATE TABLE previews (file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE, t_sec REAL, jpeg BLOB NOT NULL);
 CREATE TABLE persons (id INTEGER PRIMARY KEY, name TEXT, hidden INTEGER NOT NULL DEFAULT 0, n_faces INTEGER NOT NULL DEFAULT 0,
-  n_files INTEGER NOT NULL DEFAULT 0, centroid BLOB, skip_collect INTEGER NOT NULL DEFAULT 0);
+  n_files INTEGER NOT NULL DEFAULT 0, centroid BLOB, skip_collect INTEGER NOT NULL DEFAULT 0, n_voices INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE faces (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   person_id INTEGER REFERENCES persons(id) ON DELETE SET NULL, t_sec REAL, size REAL, embedding BLOB NOT NULL,
   thumb BLOB, manual INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE speech_done (file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE, mtime INTEGER, error TEXT);
+CREATE TABLE voices (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE, label TEXT NOT NULL,
+  seconds REAL NOT NULL, model TEXT NOT NULL, emb BLOB, cluster INTEGER, person_id INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+  manual INTEGER NOT NULL DEFAULT 0, suggest_id INTEGER REFERENCES persons(id) ON DELETE SET NULL);
+CREATE TABLE voice_not_same (a INTEGER NOT NULL, b INTEGER NOT NULL, PRIMARY KEY (a, b));
+CREATE TABLE voice_not_person (voice_id INTEGER NOT NULL REFERENCES voices(id) ON DELETE CASCADE, person_id INTEGER NOT NULL,
+  PRIMARY KEY (voice_id, person_id));
+CREATE TABLE speech (file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE, t_start REAL NOT NULL, t_end REAL NOT NULL,
+  text TEXT NOT NULL, low TEXT NOT NULL, voice_id INTEGER REFERENCES voices(id) ON DELETE SET NULL);
+CREATE VIEW person_media AS SELECT person_id, file_id FROM faces WHERE person_id IS NOT NULL
+  UNION SELECT person_id, file_id FROM voices WHERE person_id IS NOT NULL;
 CREATE TABLE tags (file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE, rank INTEGER, label TEXT, score REAL);
 CREATE TABLE deleted (path TEXT NOT NULL, moved_to TEXT, deleted_at TEXT NOT NULL, snapshot BLOB);
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
@@ -286,5 +298,81 @@ func TestZipFinish(t *testing.T) {
 	}
 	if got, want := e.cfg.MapToWindows(filepath.ToSlash(e.archive)+"/Photos/x.jpg"), `\\nas\home\Photos\x.jpg`; got != want {
 		t.Fatalf("windows path: %q want %q", got, want)
+	}
+}
+
+// a person only heard (no faces) is kept by every recount of people
+func TestVoicePersonSurvives(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	must(t, err)
+	t.Cleanup(func() { d.Close() })
+	must(t, db.Migrate(d))
+	for _, q := range []string{
+		"INSERT INTO files (id, path, kind) VALUES (1, '/a.mp4', 'video'), (2, '/b.jpg', 'image')",
+		"INSERT INTO persons (id) VALUES (5)",
+		"INSERT INTO voices (file_id, label, seconds, model, person_id) VALUES (1, 's1', 10, 'm', 5)",
+	} {
+		_, err := d.Exec(q)
+		must(t, err)
+	}
+	emb := make([]float32, 512)
+	emb[0] = 1
+	_, err = d.Exec("INSERT INTO faces (file_id, size, det_score, embedding) VALUES (2, 50, 0.9, ?)", scan.F16Blob(emb))
+	must(t, err)
+	must(t, refreshPersonStats(d))
+	people, err := scan.Cluster(d, scan.DefaultClusterOptions(), nil)
+	must(t, err)
+	var nv, nf int
+	must(t, d.QueryRow("SELECT n_voices, n_files FROM persons WHERE id = 5").Scan(&nv, &nf))
+	if people != 1 || nv != 1 || nf != 1 {
+		t.Fatalf("people %d, n_voices %d, n_files %d", people, nv, nf)
+	}
+}
+
+func TestMergeMovesVoices(t *testing.T) {
+	e := setup(t)
+	e.file("Photos/a.jpg", 1) // faces: Петя (1) and unnamed 101
+	_, err := e.db.Exec(`INSERT INTO voices (id, file_id, label, seconds, model, person_id, manual, suggest_id)
+		VALUES (1, 1, 's1', 10, 'm', 101, 1, NULL), (2, 1, 's2', 10, 'm', NULL, 0, 101)`)
+	must(t, err)
+	_, err = e.db.Exec("INSERT INTO voice_not_person VALUES (2, 101)")
+	must(t, err)
+	must(t, MergePersons(e.db, []int64{1, 101}))
+	if e.count("SELECT COUNT(*) FROM voices WHERE id = 1 AND person_id = 1 AND manual = 1") != 1 ||
+		e.count("SELECT COUNT(*) FROM voices WHERE id = 2 AND suggest_id = 1") != 1 ||
+		e.count("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = 2 AND person_id = 1") != 1 ||
+		e.count("SELECT n_voices FROM persons WHERE id = 1") != 1 {
+		t.Fatal("merge: voices, suggestions and 'not his voice' marks go to the target")
+	}
+}
+
+func TestTrashKeepsVoices(t *testing.T) {
+	e := setup(t)
+	a := e.file("Photos/a.jpg", 1)
+	for _, q := range []string{
+		"INSERT INTO persons (id) VALUES (9)", // heard only, in this file only: it goes with the file and comes back
+		"INSERT INTO voices (id, file_id, label, seconds, model, person_id, manual) VALUES (1, 1, 's1', 10, 'm', 9, 1), (2, 1, 's2', 10, 'm', 1, 0)",
+		"INSERT INTO voice_not_person VALUES (2, 9)",
+		"INSERT INTO speech_done (file_id, mtime) VALUES (1, 7)",
+		"INSERT INTO speech (file_id, t_start, t_end, text, low, voice_id) VALUES (1, 0, 1, 'Привет', 'привет', 1)",
+	} {
+		_, err := e.db.Exec(q)
+		must(t, err)
+	}
+	must(t, refreshPersonStats(e.db))
+	_, _, ids, err := e.cfg.Trash(e.db, []string{a})
+	must(t, err)
+	if e.count("SELECT COUNT(*) FROM voices") != 0 || e.count("SELECT COUNT(*) FROM persons WHERE id = 9") != 0 {
+		t.Fatal("trash: the file's voices go, the person heard only there too")
+	}
+	_, _, err = e.cfg.Restore(e.db, ids)
+	must(t, err)
+	if e.count("SELECT COUNT(*) FROM voices WHERE id = 1 AND person_id = 9 AND manual = 1") != 1 ||
+		e.count("SELECT COUNT(*) FROM voices WHERE id = 2 AND person_id = 1") != 1 ||
+		e.count("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = 2 AND person_id = 9") != 1 ||
+		e.count("SELECT COUNT(*) FROM speech_done WHERE file_id = 1") != 1 ||
+		e.count("SELECT COUNT(*) FROM speech WHERE file_id = 1 AND voice_id = 1") != 1 ||
+		e.count("SELECT n_voices FROM persons WHERE id = 9") != 1 {
+		t.Fatal("restore: voices with their people and marks, phrases and the 'heard' mark come back")
 	}
 }
