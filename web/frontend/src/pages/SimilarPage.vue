@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import { api, faceUrl, personLabel, type SimilarPair } from '@/api'
 import { useQuery } from '@/composables/useQuery'
+import VoicePairs from '@/components/VoicePairs.vue'
 import { useActions } from '@/stores/actions'
 
 const { q, set } = useQuery()
@@ -79,6 +80,7 @@ async function different(p: SimilarPair) {
         </div>
       </div>
       <div ref="sentinel" class="h-px" />
+      <VoicePairs />
     </div>
   </div>
 </template>
