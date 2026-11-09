@@ -73,7 +73,8 @@ func (s *Server) persons(w http.ResponseWriter, r *http.Request) {
 	if err != nil || min < 1 {
 		min = 2
 	}
-	kind := "AND f.kind = 'image'" // with videos hidden a person seen only in videos would open as an empty page
+	// with videos hidden a person seen only in videos would open as an empty page; voice-only people stay (their media are videos)
+	kind := "AND (f.kind = 'image' OR x.person_id IN (SELECT id FROM persons WHERE n_faces = 0 AND n_voices > 0))"
 	if q.Get("video") == "1" {
 		kind = ""
 	}
@@ -297,7 +298,7 @@ func (s *Server) personFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	with := idList(q.Get("with"))
 	cond := strings.Repeat(" AND f.id IN (SELECT file_id FROM person_media WHERE person_id = ?)", len(with))
-	face := "(SELECT t.id FROM faces t WHERE t.file_id = f.id AND t.person_id = fa.person_id ORDER BY t.size DESC LIMIT 1)"
+	face := "COALESCE((SELECT t.id FROM faces t WHERE t.file_id = f.id AND t.person_id = fa.person_id ORDER BY t.size DESC LIMIT 1), 0)" // 0 on a voice-only file
 	if q.Get("whole") != "0" {
 		face = "0"
 	}

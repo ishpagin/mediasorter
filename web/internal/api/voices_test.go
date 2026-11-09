@@ -58,7 +58,17 @@ func TestPersonMedia(t *testing.T) {
 	if len(files.Items) != 2 {
 		t.Errorf("person files: %d, want 2", len(files.Items))
 	}
+	files = FilesResp{}
+	get("/api/person/2/files?whole=0&video=1", &files) // no face on a voice-only file: still 200
+	if len(files.Items) != 1 {
+		t.Errorf("whole=0: %d, want 1", len(files.Items))
+	}
 	var people []Person
+	get("/api/persons?min=1", &people) // videos hidden: the voice-only person stays
+	if len(people) != 2 || people[0].N != 1 || people[1].ID != 2 || people[1].N != 1 {
+		t.Errorf("persons, videos hidden: %+v", people)
+	}
+	people = nil
 	get("/api/persons?min=1&video=1", &people)
 	if len(people) != 2 || people[0].ID != 1 || people[0].N != 2 || people[1].Face != 0 {
 		t.Errorf("persons: %+v", people)
