@@ -2,6 +2,7 @@ package speech
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"math"
@@ -239,5 +240,87 @@ func TestRunRetry(t *testing.T) {
 	n, err := Run(context.Background(), d, Remote(srv.URL), func(p string) string { return p }, nil)
 	if err != nil || n != 1 || calls != 3 {
 		t.Fatalf("run: n=%d calls=%d err=%v", n, calls, err)
+	}
+}
+
+func voiceDB(t *testing.T) *sql.DB {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(d); err != nil {
+		t.Fatal(err)
+	}
+	d.Exec("INSERT INTO files (id, path, kind, mtime) VALUES (1, '/a.mp4', 'video', 7), (2, '/b.mp4', 'video', 7)")
+	return d
+}
+
+func TestSaveVoices(t *testing.T) {
+	d := voiceDB(t)
+	r := Result{Model: "m", Segments: []Segment{{Start: 0, End: 5, Text: "раз два", Speaker: "s1"},
+		{Start: 5, End: 9, Text: "три четыре", Speaker: "s2"}, {Start: 9, End: 10, Text: "пять шесть"}},
+		Voices: []Voice{{Label: "s1", Seconds: 5, Embedding: []float32{1, 0}}, {Label: "s2", Seconds: 4}, {Label: "s3", Seconds: 1}}}
+	if err := save(d, 1, 7, r, nil); err != nil {
+		t.Fatal(err)
+	}
+	var n, nullEmb, withVoice int
+	d.QueryRow("SELECT COUNT(*), COALESCE(SUM(emb IS NULL), 0) FROM voices").Scan(&n, &nullEmb)
+	d.QueryRow("SELECT COUNT(*) FROM speech WHERE voice_id IS NOT NULL").Scan(&withVoice)
+	if n != 2 || nullEmb != 1 || withVoice != 2 { // s3 has no phrase: not stored
+		t.Errorf("voices=%d null emb=%d phrases with voice=%d", n, nullEmb, withVoice)
+	}
+	segs, _ := Of(d, 1)
+	if len(segs) != 3 || segs[0].Voice == 0 || segs[2].Voice != 0 {
+		t.Errorf("Of: %+v", segs)
+	}
+	save(d, 2, 7, Result{Segments: []Segment{{Start: 0, End: 5, Text: "раз два"}}}, nil)
+	d.QueryRow("SELECT COUNT(*) FROM voices WHERE file_id = 2").Scan(&n)
+	if n != 0 {
+		t.Errorf("no speakers, voices=%d", n)
+	}
+}
+
+func TestInheritMarks(t *testing.T) {
+	d := voiceDB(t)
+	d.Exec("INSERT INTO persons (id, name) VALUES (5, 'Анна'), (6, 'Борис')")
+	first := Result{Model: "m", Segments: []Segment{{Start: 0, End: 10, Text: "раз два", Speaker: "s1"}},
+		Voices: []Voice{{Label: "s1", Seconds: 10}}}
+	if err := save(d, 1, 7, first, nil); err != nil {
+		t.Fatal(err)
+	}
+	save(d, 2, 7, first, nil) // another file with a voice, to carry a "not the same" mark
+	var a, other int64
+	d.QueryRow("SELECT id FROM voices WHERE file_id = 1").Scan(&a)
+	d.QueryRow("SELECT id FROM voices WHERE file_id = 2").Scan(&other)
+	d.Exec("UPDATE voices SET person_id = 5, manual = 1 WHERE id = ?", a)
+	d.Exec("INSERT INTO voice_not_person VALUES (?, 6)", a)
+	d.Exec("INSERT INTO voice_not_same VALUES (?, ?)", a, other)
+
+	again := Result{Model: "m", Segments: []Segment{{Start: 1, End: 9, Text: "раз два", Speaker: "s2"},
+		{Start: 20, End: 30, Text: "три", Speaker: "s3"}},
+		Voices: []Voice{{Label: "s2", Seconds: 8}, {Label: "s3", Seconds: 10}}}
+	if err := save(d, 1, 8, again, nil); err != nil {
+		t.Fatal(err)
+	}
+	var person sql.NullInt64
+	var manual int
+	var v2 int64
+	d.QueryRow("SELECT id, person_id, manual FROM voices WHERE label = 's2'").Scan(&v2, &person, &manual)
+	if person.Int64 != 5 || manual != 1 {
+		t.Errorf("s2: person=%v manual=%d", person, manual)
+	}
+	d.QueryRow("SELECT person_id, manual FROM voices WHERE label = 's3'").Scan(&person, &manual)
+	if person.Valid || manual != 0 {
+		t.Errorf("s3: person=%v manual=%d", person, manual)
+	}
+	var np, ns int
+	d.QueryRow("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = ? AND person_id = 6", v2).Scan(&np)
+	d.QueryRow("SELECT COUNT(*) FROM voice_not_same WHERE a = ? AND b = ?", min(v2, other), max(v2, other)).Scan(&ns)
+	if np != 1 || ns != 1 {
+		t.Errorf("marks moved: not_person=%d not_same=%d", np, ns)
+	}
+	d.QueryRow("SELECT COUNT(*) FROM voice_not_same").Scan(&ns)
+	if ns != 1 {
+		t.Errorf("not_same rows %d, want 1", ns)
 	}
 }

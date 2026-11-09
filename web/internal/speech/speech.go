@@ -21,6 +21,7 @@ import (
 	"unicode"
 
 	"github.com/ishpagin/mediasorter/web/internal/media"
+	"github.com/ishpagin/mediasorter/web/internal/scan"
 	"github.com/ishpagin/mediasorter/web/internal/vision"
 )
 
@@ -31,6 +32,8 @@ type Segment struct {
 	Text  string  `json:"text"`
 	// Speaker is asr's label (s1, s2) for this phrase; empty when asr did not say.
 	Speaker string `json:"speaker,omitempty"`
+	// Voice is the id in voices; set by Of only.
+	Voice int64 `json:"voice,omitempty"`
 	// Confidence only filters phrases in Remote; it is not stored.
 	Confidence *float64 `json:"confidence,omitempty"`
 }
@@ -311,35 +314,185 @@ func Run(ctx context.Context, d *sql.DB, rec Recognizer, mapPath func(string) st
 				}
 			}
 		}
-		segs := res.Segments
 		if ctx.Err() != nil {
 			return spoken, ctx.Err()
 		}
 		if errors.Is(err, errService) {
 			return spoken, err
 		}
-		if err := save(d, t.id, t.mtime, segs, err); err != nil {
+		if err := save(d, t.id, t.mtime, res, err); err != nil {
 			return spoken, err
 		}
-		if len(segs) > 0 {
+		if len(res.Segments) > 0 {
 			spoken++
 		}
 	}
 	return spoken, nil
 }
 
-func save(d *sql.DB, id, mtime int64, segs []Segment, failed error) error {
+// save replaces a file's phrases and voices. A voice heard again takes the person and the manual flag of the
+// old voice it overlaps most in time, and the user's "not the same" / "not his voice" marks move with it.
+func save(d *sql.DB, id, mtime int64, r Result, failed error) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec("DELETE FROM speech WHERE file_id = ?", id); err != nil {
+	type old struct {
+		person sql.NullInt64
+		manual int
+		segs   [][2]float64
+	}
+	olds := map[int64]*old{}
+	rows, err := tx.Query("SELECT id, person_id, manual FROM voices WHERE file_id = ?", id)
+	if err != nil {
 		return err
 	}
-	for _, s := range segs {
-		if _, err := tx.Exec("INSERT INTO speech (file_id, t_start, t_end, text, low) VALUES (?, ?, ?, ?, ?)",
-			id, math.Round(s.Start*100)/100, math.Round(s.End*100)/100, s.Text, Lower(s.Text)); err != nil {
+	for rows.Next() {
+		var vid int64
+		o := &old{}
+		if err := rows.Scan(&vid, &o.person, &o.manual); err != nil {
+			rows.Close()
+			return err
+		}
+		olds[vid] = o
+	}
+	rows.Close()
+	if rows.Err() != nil {
+		return rows.Err()
+	}
+	if len(olds) > 0 {
+		if rows, err = tx.Query("SELECT voice_id, t_start, t_end FROM speech WHERE file_id = ? AND voice_id IS NOT NULL", id); err != nil {
+			return err
+		}
+		for rows.Next() {
+			var vid int64
+			var iv [2]float64
+			if err := rows.Scan(&vid, &iv[0], &iv[1]); err != nil {
+				rows.Close()
+				return err
+			}
+			olds[vid].segs = append(olds[vid].segs, iv)
+		}
+		rows.Close()
+		if rows.Err() != nil {
+			return rows.Err()
+		}
+	}
+	// marks of the old voices, read before the rows go away
+	pairs := func(q string) ([][2]int64, error) {
+		rows, err := tx.Query(q, id)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out [][2]int64
+		for rows.Next() {
+			var p [2]int64
+			if err := rows.Scan(&p[0], &p[1]); err != nil {
+				return nil, err
+			}
+			out = append(out, p)
+		}
+		return out, rows.Err()
+	}
+	notPerson, err := pairs("SELECT voice_id, person_id FROM voice_not_person WHERE voice_id IN (SELECT id FROM voices WHERE file_id = ?)")
+	if err != nil {
+		return err
+	}
+	notSame, err := pairs(`SELECT a, b FROM voice_not_same WHERE a IN (SELECT id FROM voices WHERE file_id = ?1)
+		OR b IN (SELECT id FROM voices WHERE file_id = ?1)`)
+	if err != nil {
+		return err
+	}
+	for _, q := range []string{"DELETE FROM speech WHERE file_id = ?", "DELETE FROM voices WHERE file_id = ?"} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM voice_not_same WHERE a NOT IN (SELECT id FROM voices) OR b NOT IN (SELECT id FROM voices)`); err != nil {
+		return err
+	}
+
+	ivs := map[string][][2]float64{} // new voice label -> its phrases
+	for _, s := range r.Segments {
+		if s.Speaker != "" {
+			ivs[s.Speaker] = append(ivs[s.Speaker], [2]float64{s.Start, s.End})
+		}
+	}
+	ids := map[string]int64{}
+	inherit := map[int64][]int64{} // old voice id -> new voices that took its marks
+	for _, v := range r.Voices {
+		if len(ivs[v.Label]) == 0 {
+			continue
+		}
+		var best int64
+		bestOv := 0.0
+		for oid, o := range olds {
+			ov := 0.0
+			for _, a := range o.segs {
+				for _, b := range ivs[v.Label] {
+					ov += max(0, min(a[1], b[1])-max(a[0], b[0]))
+				}
+			}
+			if ov > bestOv || ov == bestOv && ov > 0 && oid < best {
+				best, bestOv = oid, ov
+			}
+		}
+		var emb, person any
+		if len(v.Embedding) > 0 {
+			emb = scan.F16Blob(v.Embedding)
+		}
+		manual := 0
+		if bestOv > 0 {
+			if olds[best].person.Valid {
+				person = olds[best].person.Int64
+			}
+			manual = olds[best].manual
+		}
+		res, err := tx.Exec("INSERT INTO voices (file_id, label, seconds, model, emb, person_id, manual) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			id, v.Label, v.Seconds, r.Model, emb, person, manual)
+		if err != nil {
+			return err
+		}
+		nid, _ := res.LastInsertId()
+		ids[v.Label] = nid
+		if bestOv > 0 {
+			inherit[best] = append(inherit[best], nid)
+		}
+	}
+	for _, p := range notPerson {
+		for _, nid := range inherit[p[0]] {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO voice_not_person (voice_id, person_id) VALUES (?, ?)", nid, p[1]); err != nil {
+				return err
+			}
+		}
+	}
+	mapped := func(v int64) []int64 { // an old voice of this file becomes its inheritors, any other stays
+		if _, ok := olds[v]; ok {
+			return inherit[v]
+		}
+		return []int64{v}
+	}
+	for _, p := range notSame {
+		for _, a := range mapped(p[0]) {
+			for _, b := range mapped(p[1]) {
+				if a != b {
+					if _, err := tx.Exec("INSERT OR IGNORE INTO voice_not_same (a, b) VALUES (?, ?)", min(a, b), max(a, b)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
+	for _, s := range r.Segments {
+		var vid any
+		if n, ok := ids[s.Speaker]; ok {
+			vid = n
+		}
+		if _, err := tx.Exec("INSERT INTO speech (file_id, t_start, t_end, text, low, voice_id) VALUES (?, ?, ?, ?, ?, ?)",
+			id, math.Round(s.Start*100)/100, math.Round(s.End*100)/100, s.Text, Lower(s.Text), vid); err != nil {
 			return err
 		}
 	}
@@ -366,7 +519,7 @@ func Lower(s string) string {
 
 // Of: the phrases of a file, in order.
 func Of(d *sql.DB, id int64) ([]Segment, error) {
-	rows, err := d.Query("SELECT t_start, t_end, text FROM speech WHERE file_id = ? ORDER BY t_start", id)
+	rows, err := d.Query("SELECT t_start, t_end, text, COALESCE(voice_id, 0) FROM speech WHERE file_id = ? ORDER BY t_start", id)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +527,7 @@ func Of(d *sql.DB, id int64) ([]Segment, error) {
 	out := []Segment{}
 	for rows.Next() {
 		var s Segment
-		if err := rows.Scan(&s.Start, &s.End, &s.Text); err != nil {
+		if err := rows.Scan(&s.Start, &s.End, &s.Text, &s.Voice); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
