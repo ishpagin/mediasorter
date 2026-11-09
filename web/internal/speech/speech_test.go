@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ishpagin/mediasorter/web/internal/db"
 	"github.com/ishpagin/mediasorter/web/internal/media"
@@ -55,7 +56,7 @@ func TestSegments(t *testing.T) {
 		tok(" С", 12), tok(".", 12.1), // a one-letter scrap
 		{Text: " мне", At: 15, LogProb: -1.5}, {Text: " то", At: 15.1, LogProb: -1.5}, {Text: ".", At: 15.2, LogProb: -1}, // unsure
 	})
-	want := []Segment{{0.1, 0.7, "Привет, мир."}, {0.7, 1.5, "Как дела"}, {5, 5.5, "Хорошо!"}}
+	want := []Segment{{Start: 0.1, End: 0.7, Text: "Привет, мир."}, {Start: 0.7, End: 1.5, Text: "Как дела"}, {Start: 5, End: 5.5, Text: "Хорошо!"}}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v", got)
 	}
@@ -126,17 +127,23 @@ func TestRunRemote(t *testing.T) {
 	}
 
 	calls, down := 0, false
+	half := 0.5
+	retryPause = []time.Duration{0, 0, 0}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if down {
 			http.Error(w, "boom", 500)
 			return
 		}
+		if r.URL.Query().Get("speakers") != "1" {
+			t.Errorf("no speakers=1: %s", r.URL)
+		}
 		if r.URL.Path != "/transcribe" || r.Header.Get("Content-Type") != "audio/wav" {
 			t.Errorf("request %s %s", r.URL.Path, r.Header.Get("Content-Type"))
 		}
 		json.NewEncoder(w).Encode(map[string]any{"text": "Торт со свечами.",
-			"segments": []Segment{{0, 1.5, "Торт со свечами."}, {1.5, 2, " "}}})
+			"segments": []Segment{{Start: 0, End: 1.5, Text: "Торт со свечами.", Speaker: "s1"},
+				{Start: 1.5, End: 2, Text: " "}, {Start: 2, End: 3, Text: "Привет, мир.", Speaker: "s2", Confidence: &half}}})
 	}))
 	defer srv.Close()
 	same := func(p string) string { return p }
@@ -173,5 +180,64 @@ func TestRunRemote(t *testing.T) {
 	d.QueryRow("SELECT mtime FROM speech_done WHERE file_id = 1").Scan(&mtime)
 	if mtime != 7 {
 		t.Errorf("a failed service marked the video as done (mtime %d)", mtime)
+	}
+}
+
+func TestRemoteResult(t *testing.T) {
+	old := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if old {
+			w.Write([]byte(`{"segments":[{"start":0,"end":1,"text":"Привет, мир."}]}`))
+			return
+		}
+		w.Write([]byte(`{"segments":[{"start":0,"end":1,"text":"Привет, мир.","speaker":"s1","confidence":0.9},
+			{"start":1,"end":2,"text":"Мутно сказано","speaker":"s2","confidence":0.5}],
+			"speakers":[{"label":"s1","seconds":4,"embedding":[0.5,0.25]},{"label":"s2","seconds":1}],
+			"embedding_model":"m1"}`))
+	}))
+	defer srv.Close()
+	r, err := Remote(srv.URL)(context.Background(), make([]float32, 1600))
+	if err != nil || len(r.Segments) != 1 || r.Voices != nil || r.Model != "" {
+		t.Fatalf("old asr: %+v %v", r, err)
+	}
+	old = false
+	r, err = Remote(srv.URL)(context.Background(), make([]float32, 1600))
+	if err != nil || len(r.Segments) != 1 || r.Segments[0].Speaker != "s1" || r.Model != "m1" ||
+		len(r.Voices) != 2 || r.Voices[0].Label != "s1" || len(r.Voices[0].Embedding) != 2 || r.Voices[1].Embedding != nil {
+		t.Fatalf("result: %+v %v", r, err)
+	}
+}
+
+func TestRunRetry(t *testing.T) {
+	if _, err := exec.LookPath(media.FFmpeg); err != nil {
+		t.Skip("no ffmpeg")
+	}
+	dir := t.TempDir()
+	sound := filepath.Join(dir, "sound.wav")
+	ff(t, "-f", "lavfi", "-i", "sine=frequency=440:duration=1", sound)
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec("INSERT INTO files (id, path, kind, mtime) VALUES (1, ?, 'video', 7)", sound); err != nil {
+		t.Fatal(err)
+	}
+	defer func(p []time.Duration) { retryPause = p }(retryPause)
+	retryPause = []time.Duration{0, 0, 0}
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls++; calls <= 2 {
+			http.Error(w, "boom", 500)
+			return
+		}
+		w.Write([]byte(`{"segments":[{"start":0,"end":1,"text":"Торт со свечами."}]}`))
+	}))
+	defer srv.Close()
+	n, err := Run(context.Background(), d, Remote(srv.URL), func(p string) string { return p }, nil)
+	if err != nil || n != 1 || calls != 3 {
+		t.Fatalf("run: n=%d calls=%d err=%v", n, calls, err)
 	}
 }

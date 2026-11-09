@@ -29,10 +29,31 @@ type Segment struct {
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
 	Text  string  `json:"text"`
+	// Speaker is asr's label (s1, s2) for this phrase; empty when asr did not say.
+	Speaker string `json:"speaker,omitempty"`
+	// Confidence only filters phrases in Remote; it is not stored.
+	Confidence *float64 `json:"confidence,omitempty"`
 }
 
-// Recognizer: mono 16 kHz audio in, phrases out.
-type Recognizer func(ctx context.Context, pcm []float32) ([]Segment, error)
+// Voice: one speaker asr heard in a file. Embedding is empty for a voice with under 3 s of speech.
+type Voice struct {
+	Label     string    `json:"label"`
+	Seconds   float64   `json:"seconds"`
+	Embedding []float32 `json:"embedding"`
+}
+
+// Result: what a recognizer returns. Model is asr's embedding_model, so vectors of different models are not mixed.
+type Result struct {
+	Segments []Segment
+	Voices   []Voice
+	Model    string
+}
+
+// Recognizer: mono 16 kHz audio in, phrases and voices out.
+type Recognizer func(ctx context.Context, pcm []float32) (Result, error)
+
+// retryPause: waits before the retries of a failed service call (tests set it to zeros).
+var retryPause = []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute}
 
 // errService: the remote service failed; the job stops instead of marking every video as failed.
 var errService = errors.New("сервис распознавания речи недоступен")
@@ -90,16 +111,16 @@ func cuts(pcm []float32) []int {
 
 // Local: recognition with the model in this process.
 func Local(m *vision.Speech) Recognizer {
-	return func(ctx context.Context, pcm []float32) ([]Segment, error) {
+	return func(ctx context.Context, pcm []float32) (Result, error) {
 		var toks []vision.Token
 		from := 0
 		for _, to := range cuts(pcm) {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return Result{}, ctx.Err()
 			}
 			t, err := m.Recognize(pcm[from:to])
 			if err != nil {
-				return nil, err
+				return Result{}, err
 			}
 			for _, x := range t {
 				x.At += float64(from) / vision.SpeechRate
@@ -107,7 +128,7 @@ func Local(m *vision.Speech) Recognizer {
 			}
 			from = to
 		}
-		return Segments(toks), nil
+		return Result{Segments: Segments(toks)}, nil
 	}
 }
 
@@ -135,7 +156,7 @@ func Segments(toks []vision.Token) []Segment {
 	n := 0
 	flush := func() {
 		if t := join(b.String()); n > 0 && worth(t) && math.Exp(logp/float64(n)) >= minConfidence {
-			out = append(out, Segment{start, last + 0.3, t})
+			out = append(out, Segment{Start: start, End: last + 0.3, Text: t})
 		}
 		b.Reset()
 		logp, n = 0, 0
@@ -176,36 +197,41 @@ func join(s string) string {
 	return b.String()
 }
 
-// Remote: recognition by the shared service: POST {url}/transcribe with a WAV,
-// answer {"text": "...", "segments": [{"start", "end", "text"}]}.
+// Remote: recognition by the shared service: POST {url}/transcribe?speakers=1 with a WAV, answer
+// {"segments": [{"start", "end", "text", "confidence", "speaker"}], "speakers": [{"label", "seconds", "embedding"}],
+// "embedding_model": "..."}. Phrases with confidence under 0.6 are dropped; an old asr sends no such fields.
 func Remote(url string) Recognizer {
 	client := &http.Client{Timeout: 30 * time.Minute}
-	return func(ctx context.Context, pcm []float32) ([]Segment, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(url, "/")+"/transcribe",
+	return func(ctx context.Context, pcm []float32) (Result, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(url, "/")+"/transcribe?speakers=1",
 			bytes.NewReader(wav(pcm)))
 		if err != nil {
-			return nil, err
+			return Result{}, err
 		}
 		req.Header.Set("Content-Type", "audio/wav")
 		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return Result{}, ctx.Err()
 			}
-			return nil, fmt.Errorf("%w: %v", errService, err)
+			return Result{}, fmt.Errorf("%w: %v", errService, err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("%w: HTTP %d", errService, resp.StatusCode)
+			return Result{}, fmt.Errorf("%w: HTTP %d", errService, resp.StatusCode)
 		}
-		var r struct{ Segments []Segment }
+		var r struct {
+			Segments []Segment
+			Speakers []Voice
+			Model    string `json:"embedding_model"`
+		}
 		if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-			return nil, fmt.Errorf("%w: %v", errService, err)
+			return Result{}, fmt.Errorf("%w: %v", errService, err)
 		}
-		out := r.Segments[:0]
+		out := Result{Voices: r.Speakers, Model: r.Model}
 		for _, s := range r.Segments {
-			if s.Text = strings.TrimSpace(s.Text); worth(s.Text) {
-				out = append(out, s)
+			if s.Text = strings.TrimSpace(s.Text); worth(s.Text) && (s.Confidence == nil || *s.Confidence >= 0.6) {
+				out.Segments = append(out.Segments, s)
 			}
 		}
 		return out, nil
@@ -270,11 +296,22 @@ func Run(ctx context.Context, d *sql.DB, rec Recognizer, mapPath func(string) st
 		if _, err := os.Stat(local); err != nil {
 			continue // an unmounted NAS: try again next time, not a failure of the video
 		}
-		var segs []Segment
+		var res Result
 		pcm, err := Audio(ctx, local)
 		if err == nil && len(pcm) > 0 {
-			segs, err = rec(ctx, pcm)
+			res, err = rec(ctx, pcm)
+			for _, pause := range retryPause {
+				if !errors.Is(err, errService) {
+					break
+				}
+				select {
+				case <-ctx.Done():
+				case <-time.After(pause):
+					res, err = rec(ctx, pcm)
+				}
+			}
 		}
+		segs := res.Segments
 		if ctx.Err() != nil {
 			return spoken, ctx.Err()
 		}
