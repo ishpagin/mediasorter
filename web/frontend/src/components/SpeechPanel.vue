@@ -4,10 +4,28 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ChevronDown, ChevronUp, Copy, Search } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import type { Segment } from '../api'
+import { api, personLabel, type ActionResp, type Segment, type Voice } from '../api'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import PersonPicker from './PersonPicker.vue'
+import { useActions } from '@/stores/actions'
 
-const props = defineProps<{ said: Segment[]; now: number; query: string }>()
-const emit = defineEmits<{ play: [t: number] }>()
+const props = defineProps<{ said: Segment[]; voices: Voice[]; now: number; query: string }>()
+const emit = defineEmits<{ play: [t: number]; changed: [] }>()
+const actions = useActions()
+
+const voiceOf = (id?: number) => props.voices.find((v) => v.id === id)
+const caption = (v: Voice) => (v.person ? personLabel({ id: v.person, name: v.name })
+  : v.suggest ? `${v.suggestName || personLabel({ id: v.suggest })}?` : `Голос ${v.n}`)
+// mark a voice right here, then read the text again
+async function mark(fn: () => Promise<ActionResp>) {
+  if (await actions.run(fn, false)) emit('changed')
+}
+const accept = (v: Voice) => mark(() => api.voicePerson(v.id, { person: v.suggest }))
+const reject = (v: Voice, person: number) => mark(() => api.voiceReject(v.id, person))
+const clear = (v: Voice) => mark(() => api.voicePerson(v.id, { clear: true })) // takes the person off and remembers "not his voice"
+const create = (v: Voice) => mark(() => api.voicePerson(v.id, { create: true }))
+const setPerson = (v: Voice, p: number | null | undefined) => p && mark(() => api.voicePerson(v.id, { person: p }))
 
 const root = ref<HTMLElement>()
 const find = ref('')
@@ -38,11 +56,12 @@ function parts(text: string): { t: string; mark: boolean }[] {
 }
 
 const paragraphs = computed(() => {
-  const out: { start: number; len: number; items: { i: number; s: Segment }[] }[] = []
+  const out: { start: number; len: number; voice?: Voice; items: { i: number; s: Segment }[] }[] = []
   props.said.forEach((s, i) => {
     const prev = props.said[i - 1]
     const last = out.at(-1)
-    if (!prev || !last || s.start - prev.end > 2 || /^[—-]/.test(s.text) || last.len > 280) out.push({ start: s.start, len: 0, items: [] })
+    if (!prev || !last || s.start - prev.end > 2 || /^[—-]/.test(s.text) || last.len > 280 || s.voice !== prev.voice)
+      out.push({ start: s.start, len: 0, voice: voiceOf(s.voice), items: [] })
     out.at(-1)!.items.push({ i, s })
     out.at(-1)!.len += s.text.length
   })
@@ -92,7 +111,26 @@ async function copy() {
       <button class="icon" aria-label="Скопировать текст" title="Скопировать текст" @click="copy"><Copy class="size-4" /></button>
     </div>
     <p v-for="p in paragraphs" :key="p.start" class="para">
-      <span class="at">{{ mmss(p.start) }}</span>
+      <span class="at">{{ mmss(p.start) }}
+        <Popover v-if="p.voice">
+          <PopoverTrigger as-child>
+            <button class="who" :class="{ guess: !p.voice.person && p.voice.suggest }" title="Кто говорит">{{ caption(p.voice) }}</button>
+          </PopoverTrigger>
+          <PopoverContent class="w-64 space-y-1 p-2" align="start">
+            <template v-if="!p.voice.person && p.voice.suggest">
+              <Button size="sm" class="w-full" @click="accept(p.voice)">
+                Да, это {{ p.voice.suggestName || personLabel({ id: p.voice.suggest }) }}
+              </Button>
+              <Button size="sm" variant="outline" class="w-full" @click="reject(p.voice, p.voice.suggest!)">Нет</Button>
+            </template>
+            <PersonPicker :model-value="p.voice.person" size="sm" block placeholder="Выбрать человека"
+                          @update:model-value="setPerson(p.voice, $event)" />
+            <Button size="sm" variant="outline" class="w-full" @click="create(p.voice)">Новый человек</Button>
+            <Button v-if="p.voice.person" size="sm" variant="outline" class="w-full"
+                    @click="clear(p.voice)">Голос не его</Button>
+          </PopoverContent>
+        </Popover>
+      </span>
       <template v-for="x in p.items" :key="x.i">
         <!-- a span, not a button: a button is an inline block, every phrase would start a new line -->
         <span :data-i="x.i" class="phrase" :class="{ cur: x.i === now, found: find.trim() && matches[hit] === x.i }"
@@ -125,6 +163,12 @@ async function copy() {
   background: none; color: #a1a1aa; cursor: pointer;
 }
 .icon:hover { background: #27272a; color: #f4f4f5; }
+.who {
+  margin-left: 8px; padding: 0 6px; border-radius: 4px; background: #27272a; color: #e4e4e7; font-size: 12px; cursor: pointer;
+}
+.who.guess { color: #fbbf24; }
+.who:hover { background: #3f3f46; }
+.who:focus-visible { outline: 2px solid var(--ms-pick); }
 .para { margin: 0; padding: 8px 0; }
 .at {
   display: block; margin-bottom: 2px; font-size: 12px; color: #71717a; font-variant-numeric: tabular-nums;

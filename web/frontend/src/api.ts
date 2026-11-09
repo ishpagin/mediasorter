@@ -78,7 +78,10 @@ export interface Meta {
 }
 
 // a phrase said in a video, seconds from its start
-export interface Segment { start: number; end: number; text: string }
+export interface Segment { start: number; end: number; text: string; voice?: number }
+// a speaker of a video; n counts from 1 in order of first appearance
+export interface Voice { id: number; n: number; person?: number; name?: string; suggest?: number; suggestName?: string; manual: boolean }
+export interface Speech { segments: Segment[]; voices: Voice[] }
 
 export interface Failure { path: string; error: string }
 
@@ -171,7 +174,9 @@ export const api = {
   collectionDelete: (id: number) => post<ActionResp>(`/api/collections/${id}`, {}, 'DELETE'),
   job: () => get<Job>('/api/jobs'),
   startJob: (name: string) => post<Job>('/api/jobs', { name }),
-  speech: (id: number) => get<Segment[]>(`/api/speech?id=${id}`),
+  speech: (id: number) => get<Speech>(`/api/speech?id=${id}`),
+  voicePerson: (id: number, body: { person?: number; create?: boolean; clear?: boolean }) => post<ActionResp>(`/api/voices/${id}/person`, body),
+  voiceReject: (id: number, person: number) => post<ActionResp>(`/api/voices/${id}/reject`, { person }),
 }
 
 export const faceUrl = (id: number) => `/thumb/face/${id}`

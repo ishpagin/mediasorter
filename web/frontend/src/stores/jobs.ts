@@ -6,7 +6,7 @@ import { useActions } from './actions'
 
 const LABELS: Record<string, string> = {
   scan: 'Разбор фото', cluster: 'Пересчёт кластеров', tag: 'Сюжеты', stacks_build: 'Сборка стопок',
-  stacks_score: 'Оценка качества', speech: 'Распознавание речи', speech_setup: 'Распознавание речи',
+  stacks_score: 'Оценка качества', speech: 'Распознавание речи', speech_setup: 'Распознавание речи', speech_all: 'Речь во всех видео',
 }
 
 // the long job of the analysis (one at a time): start, follow the progress, refresh lists at the end

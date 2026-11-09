@@ -6,7 +6,7 @@ import { Captions, ChevronLeft, ChevronRight, Maximize, Trash2, TriangleAlert, X
 import { useRoute } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import SpeechPanel from './SpeechPanel.vue'
-import { api, originalUrl, previewUrl, type Item, type Segment } from '../api'
+import { api, originalUrl, previewUrl, type Item, type Voice, type Segment } from '../api'
 
 const props = defineProps<{ items: Item[] }>()
 const id = defineModel<number | null>({ required: true })
@@ -50,6 +50,7 @@ watch(() => props.items, () => { if (index.value < 0) close() }) // the file is 
 
 // what is said in the video, the phrase being said now is highlighted, a click plays from it
 const said = ref<Segment[]>([])
+const voices = ref<Voice[]>([])
 const now = ref(-1)
 const showText = ref(true)
 const route = useRoute()
@@ -57,13 +58,17 @@ const query = computed(() => String(route.query.q ?? '')) // opened from the sea
 const hasText = computed(() => showText.value && said.value.length > 0)
 watch(() => item.value?.id, async (want) => {
   said.value = []
+  voices.value = []
   now.value = -1
   if (want === undefined || item.value?.kind !== 'video') return
+  await loadSpeech(want)
+}, { immediate: true })
+async function loadSpeech(want: number) {
   try {
     const s = await api.speech(want)
-    if (id.value === want) said.value = s
+    if (id.value === want) { said.value = s.segments; voices.value = s.voices }
   } catch { /* no text, no panel */ }
-}, { immediate: true })
+}
 function onTime() {
   const t = video.value?.currentTime ?? 0
   let i = -1
@@ -184,7 +189,7 @@ const info = computed(() => {
         <img v-else :key="item.id" :src="full ?? previewUrl(item.id)" alt="" class="media" draggable="false" />
         <button class="nav prev" :disabled="index <= 0" aria-label="Предыдущее" @click="step(-1)"><ChevronLeft class="mx-auto size-6" /></button>
         <button class="nav next" :disabled="index >= items.length - 1" aria-label="Следующее" @click="step(1)"><ChevronRight class="mx-auto size-6" /></button>
-        <SpeechPanel v-if="hasText" :said="said" :now="now" :query="query" @play="playFrom" />
+        <SpeechPanel v-if="hasText" :said="said" :voices="voices" :now="now" :query="query" @play="playFrom" @changed="loadSpeech(item!.id)" />
       </div>
       <div v-if="group.length > 1" ref="strip" class="strip">
         <button v-for="g in group" :key="g.id" class="thumb" :class="{ cur: g.id === item.id }" :title="g.name" @click="id = g.id">
