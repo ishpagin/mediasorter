@@ -158,6 +158,9 @@ func restoreSnapshot(q querier, data []byte) error {
 
 var errLegacySnapshot = errors.New("старое удаление (до нового интерфейса): верни его командой photosorter.py restore")
 
+// RefreshPersonStats: recount people's faces, voices and files after their links changed by hand.
+func RefreshPersonStats(q querier) error { return refreshPersonStats(q) }
+
 func refreshPersonStats(q querier) error {
 	if _, err := q.Exec(`UPDATE persons SET
 		n_faces = (SELECT COUNT(*) FROM faces WHERE person_id = persons.id),

@@ -1,11 +1,13 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ishpagin/mediasorter/web/internal/core"
@@ -86,5 +88,127 @@ func TestPersonMedia(t *testing.T) {
 	per, nobody, failed, _ := cfg.ByPeople(d, []int64{2}, true)
 	if per["Петя"] != 1 || per["Голос"] != 1 || len(nobody) != 0 {
 		t.Errorf("ByPeople: %v %v %v", per, nobody, failed)
+	}
+}
+
+func voiceServer(t *testing.T, stmts ...string) (*http.ServeMux, *sql.DB) {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	if err := db.Migrate(d); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range append([]string{
+		"INSERT INTO files (id, path, kind, n_faces) VALUES (1, '/v/a.mp4', 'video', 0), (2, '/v/b.mp4', 'video', 0)",
+		"INSERT INTO persons (id, name) VALUES (1, 'Петя'), (2, 'Вася')",
+	}, stmts...) {
+		if _, err := d.Exec(q); err != nil {
+			t.Fatal(q, err)
+		}
+	}
+	mux := http.NewServeMux()
+	(&Server{DB: d, Cfg: &core.Config{}, ML: &stubML{}}).Routes(mux)
+	return mux, d
+}
+
+func do(mux *http.ServeMux, method, url, body string, out any) int {
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(method, url, strings.NewReader(body)))
+	if out != nil {
+		json.Unmarshal(w.Body.Bytes(), out)
+	}
+	return w.Code
+}
+
+func TestSpeechWithVoices(t *testing.T) {
+	mux, _ := voiceServer(t,
+		"INSERT INTO voices (id, file_id, label, seconds, model, person_id) VALUES (1, 1, 's1', 9, 'm', 1), (2, 1, 's2', 9, 'm', NULL)",
+		"INSERT INTO speech (file_id, t_start, t_end, text, low, voice_id) VALUES (1, 1, 2, 'раз', 'раз', 2), (1, 5, 6, 'два', 'два', 1)")
+	var r struct {
+		Segments []struct{ Voice int64 }
+		Voices   []VoiceInfo
+	}
+	if c := do(mux, "GET", "/api/speech?id=1", "", &r); c != 200 || len(r.Segments) != 2 || r.Segments[0].Voice != 2 {
+		t.Fatalf("%d %+v", c, r)
+	}
+	if len(r.Voices) != 2 || r.Voices[0].ID != 2 || r.Voices[0].N != 1 || r.Voices[1].ID != 1 || r.Voices[1].N != 2 || r.Voices[1].Name != "Петя" {
+		t.Errorf("voices: %+v", r.Voices)
+	}
+}
+
+func TestVoiceAssign(t *testing.T) {
+	mux, d := voiceServer(t,
+		"INSERT INTO voices (id, file_id, label, seconds, model, cluster) VALUES (1, 1, 's1', 9, 'm', 7), (2, 2, 's1', 9, 'm', 7), (3, 2, 's2', 9, 'm', 8)")
+	if c := do(mux, "POST", "/api/voices/1/person", `{"person":1}`, nil); c != 200 {
+		t.Fatal(c)
+	}
+	var man [3]int
+	var per [3]sql.NullInt64
+	read := func() {
+		for i := range per {
+			d.QueryRow("SELECT manual, person_id FROM voices WHERE id = ?", i+1).Scan(&man[i], &per[i])
+		}
+	}
+	read()
+	if man[0] != 1 || per[0].Int64 != 1 || man[1] != 0 || per[1].Int64 != 1 || per[2].Valid {
+		t.Errorf("assign: %v %v", man, per)
+	}
+	var n int
+	d.QueryRow("SELECT n_voices FROM persons WHERE id = 1").Scan(&n)
+	if n != 2 {
+		t.Errorf("n_voices = %d, want 2", n)
+	}
+	do(mux, "POST", "/api/voices/1/person", `{"clear":true}`, nil)
+	read()
+	d.QueryRow("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = 1 AND person_id = 1").Scan(&n)
+	if per[0].Valid || man[0] != 1 || n != 1 {
+		t.Errorf("clear: %v %v marks=%d", man, per, n)
+	}
+	do(mux, "POST", "/api/voices/3/person", `{"create":true}`, nil)
+	read()
+	if !per[2].Valid || per[2].Int64 < 3 || man[2] != 1 {
+		t.Errorf("create: %v %v", man, per)
+	}
+}
+
+func TestVoicesSameConflict(t *testing.T) {
+	mux, d := voiceServer(t,
+		"INSERT INTO voices (id, file_id, label, seconds, model, person_id) VALUES (1, 1, 's1', 9, 'm', 1), (2, 2, 's1', 9, 'm', 2), (3, 2, 's2', 9, 'm', NULL)")
+	var r struct{ Conflict struct{ A, B Person } }
+	if c := do(mux, "POST", "/api/voices/same", `{"a":1,"b":2}`, &r); c != 409 || r.Conflict.A.ID != 1 || r.Conflict.B.Name != "Вася" {
+		t.Fatalf("%d %+v", c, r)
+	}
+	var p1, p2 int64
+	d.QueryRow("SELECT person_id FROM voices WHERE id = 1").Scan(&p1)
+	d.QueryRow("SELECT person_id FROM voices WHERE id = 2").Scan(&p2)
+	if p1 != 1 || p2 != 2 {
+		t.Errorf("changed: %d %d", p1, p2)
+	}
+	if c := do(mux, "POST", "/api/voices/same", `{"a":1,"b":3}`, nil); c != 200 {
+		t.Fatal(c)
+	}
+	d.QueryRow("SELECT person_id FROM voices WHERE id = 3").Scan(&p1)
+	if p1 != 1 {
+		t.Errorf("same: voice 3 has person %d, want 1", p1)
+	}
+}
+
+func TestVoicePairs(t *testing.T) {
+	// a = [1, 0], b = [0.5, 0.866], c = [0.5, -0.866] in float16: a~b and a~c are 0.5, b~c is -0.5
+	mux, _ := voiceServer(t,
+		"INSERT INTO voices (id, file_id, label, seconds, model, cluster, emb) VALUES (1, 1, 's1', 9, 'm', 1, x'003C0000'), (2, 1, 's2', 9, 'm', 2, x'0038ED3A'), (3, 2, 's1', 9, 'm', 3, x'0038EDBA')")
+	var r struct{ Pairs []pairOut }
+	do(mux, "GET", "/api/voices/pairs", "", &r)
+	if len(r.Pairs) != 2 {
+		t.Fatalf("pairs: %+v", r.Pairs)
+	}
+	do(mux, "POST", "/api/voices/notsame", `{"a":2,"b":1}`, nil)
+	r.Pairs = nil
+	do(mux, "GET", "/api/voices/pairs", "", &r)
+	if len(r.Pairs) != 1 {
+		t.Errorf("after notsame: %+v", r.Pairs)
 	}
 }

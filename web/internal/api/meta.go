@@ -29,7 +29,7 @@ func (s *Server) speechMode() string {
 	return "none"
 }
 
-// GET /api/speech?id=: what is said in a video, phrase by phrase.
+// GET /api/speech?id=: what is said in a video, phrase by phrase, and who says it.
 func (s *Server) speech(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
 	if err != nil {
@@ -41,7 +41,15 @@ func (s *Server) speech(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	writeJSON(w, r, segs)
+	voices, err := s.voicesOf(id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	writeJSON(w, r, struct {
+		Segments []speech.Segment `json:"segments"`
+		Voices   []VoiceInfo      `json:"voices"`
+	}{segs, voices})
 }
 
 // meta: GET /api/meta — sidebar numbers and the collections list.

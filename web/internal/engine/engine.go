@@ -122,6 +122,7 @@ var jobNames = map[string]string{
 	"stacks_score": "Оценка качества",
 	"tag":          "Сюжеты",
 	"speech":       "Распознавание речи",
+	"speech_all":   "Пересчёт речи во всех видео",
 	"speech_setup": "Скачивание распознавания речи",
 }
 
@@ -248,6 +249,11 @@ func (e *Engine) run(ctx context.Context, name string) (string, error) {
 		_, err = scan.Score(ctx, e.cfg.DB, t, e.cfg.MapPath, e.cfg.Scan.Workers*2, e.progress(0, 1))
 		return "Качество оценено", err
 	case "speech":
+		return e.speech(ctx, e.progress(0, 1))
+	case "speech_all":
+		if _, err := e.cfg.DB.Exec("DELETE FROM speech_done"); err != nil {
+			return "", err
+		}
 		return e.speech(ctx, e.progress(0, 1))
 	case "speech_setup":
 		if e.cfg.ASR == "" {
