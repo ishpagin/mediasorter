@@ -324,3 +324,46 @@ func TestInheritMarks(t *testing.T) {
 		t.Errorf("not_same rows %d, want 1", ns)
 	}
 }
+
+func TestInheritOneToOne(t *testing.T) {
+	d := voiceDB(t)
+	d.Exec("INSERT INTO persons (id, name) VALUES (5, 'Анна')")
+	save(d, 1, 7, Result{Model: "m", Segments: []Segment{{Start: 0, End: 10, Text: "раз два", Speaker: "s1"}},
+		Voices: []Voice{{Label: "s1", Seconds: 10}}}, nil)
+	d.Exec("UPDATE voices SET person_id = 5, manual = 1")
+	// the old voice is split in two: s1 covers 0-3, s2 covers 3-10, the bigger overlap wins
+	save(d, 1, 8, Result{Model: "m", Segments: []Segment{{Start: 0, End: 3, Text: "раз", Speaker: "s1"}, {Start: 3, End: 10, Text: "два", Speaker: "s2"}},
+		Voices: []Voice{{Label: "s1", Seconds: 3}, {Label: "s2", Seconds: 7}}}, nil)
+	for label, want := range map[string]int{"s1": 0, "s2": 1} {
+		var has, m int
+		d.QueryRow("SELECT person_id IS NOT NULL, manual FROM voices WHERE label = ?", label).Scan(&has, &m)
+		if has != want || m != want {
+			t.Errorf("%s: person=%d manual=%d, want %d", label, has, m, want)
+		}
+	}
+}
+
+func TestSaveKeepsVoices(t *testing.T) {
+	d := voiceDB(t)
+	r := Result{Model: "m", Segments: []Segment{{Start: 0, End: 5, Text: "раз два", Speaker: "s1"}}, Voices: []Voice{{Label: "s1", Seconds: 5}}}
+	save(d, 1, 7, r, nil)
+	d.Exec("UPDATE voices SET manual = 1")
+	// no voices in the answer: the voice stays, phrases lose their voice_id
+	save(d, 1, 8, Result{Segments: []Segment{{Start: 0, End: 5, Text: "раз два"}}}, nil)
+	var n, withVoice int
+	d.QueryRow("SELECT COUNT(*) FROM voices WHERE manual = 1").Scan(&n)
+	d.QueryRow("SELECT COUNT(*) FROM speech WHERE voice_id IS NOT NULL").Scan(&withVoice)
+	if n != 1 || withVoice != 0 {
+		t.Errorf("no voices answer: voices=%d phrases with voice=%d", n, withVoice)
+	}
+	// a failed recognition touches nothing but speech_done
+	save(d, 1, 9, Result{}, errors.New("boom"))
+	var phrases int
+	var msg string
+	d.QueryRow("SELECT COUNT(*) FROM speech").Scan(&phrases)
+	d.QueryRow("SELECT COUNT(*) FROM voices WHERE manual = 1").Scan(&n)
+	d.QueryRow("SELECT error FROM speech_done WHERE file_id = 1").Scan(&msg)
+	if phrases != 1 || n != 1 || msg != "boom" {
+		t.Errorf("failed: phrases=%d voices=%d err=%q", phrases, n, msg)
+	}
+}

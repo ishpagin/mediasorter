@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -338,6 +339,12 @@ func save(d *sql.DB, id, mtime int64, r Result, failed error) error {
 		return err
 	}
 	defer tx.Rollback()
+	if failed != nil { // keep the old phrases, voices and marks; only note the error
+		if _, err := tx.Exec("INSERT OR REPLACE INTO speech_done (file_id, mtime, error) VALUES (?, ?, ?)", id, mtime, failed.Error()); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	type old struct {
 		person sql.NullInt64
 		manual int
@@ -372,7 +379,9 @@ func save(d *sql.DB, id, mtime int64, r Result, failed error) error {
 				rows.Close()
 				return err
 			}
-			olds[vid].segs = append(olds[vid].segs, iv)
+			if o := olds[vid]; o != nil {
+				o.segs = append(o.segs, iv)
+			}
 		}
 		rows.Close()
 		if rows.Err() != nil {
@@ -405,13 +414,18 @@ func save(d *sql.DB, id, mtime int64, r Result, failed error) error {
 	if err != nil {
 		return err
 	}
-	for _, q := range []string{"DELETE FROM speech WHERE file_id = ?", "DELETE FROM voices WHERE file_id = ?"} {
-		if _, err := tx.Exec(q, id); err != nil {
+	if _, err := tx.Exec("DELETE FROM speech WHERE file_id = ?", id); err != nil {
+		return err
+	}
+	if len(r.Voices) > 0 { // no voices in the answer (local model, old asr): the old ones and their marks stay
+		if _, err := tx.Exec("DELETE FROM voices WHERE file_id = ?", id); err != nil {
 			return err
 		}
-	}
-	if _, err := tx.Exec(`DELETE FROM voice_not_same WHERE a NOT IN (SELECT id FROM voices) OR b NOT IN (SELECT id FROM voices)`); err != nil {
-		return err
+		if _, err := tx.Exec(`DELETE FROM voice_not_same WHERE a NOT IN (SELECT id FROM voices) OR b NOT IN (SELECT id FROM voices)`); err != nil {
+			return err
+		}
+	} else {
+		olds, notPerson, notSame = nil, nil, nil
 	}
 
 	ivs := map[string][][2]float64{} // new voice label -> its phrases
@@ -420,45 +434,66 @@ func save(d *sql.DB, id, mtime int64, r Result, failed error) error {
 			ivs[s.Speaker] = append(ivs[s.Speaker], [2]float64{s.Start, s.End})
 		}
 	}
-	ids := map[string]int64{}
-	inherit := map[int64][]int64{} // old voice id -> new voices that took its marks
+	var vs []Voice // voices that have phrases, in the answer's order
 	for _, v := range r.Voices {
-		if len(ivs[v.Label]) == 0 {
-			continue
+		if len(ivs[v.Label]) > 0 {
+			vs = append(vs, v)
 		}
-		var best int64
-		bestOv := 0.0
-		for oid, o := range olds {
-			ov := 0.0
-			for _, a := range o.segs {
-				for _, b := range ivs[v.Label] {
-					ov += max(0, min(a[1], b[1])-max(a[0], b[0]))
-				}
-			}
-			if ov > bestOv || ov == bestOv && ov > 0 && oid < best {
-				best, bestOv = oid, ov
+	}
+	oids := make([]int64, 0, len(olds))
+	for oid := range olds {
+		oids = append(oids, oid)
+	}
+	slices.Sort(oids)
+	// Marks pass one to one: an old voice goes to the new voice it overlaps most, a new voice takes
+	// the old one with the biggest overlap among those that chose it. Ties: the first in order.
+	ov := func(o *old, label string) (sum float64) {
+		for _, a := range o.segs {
+			for _, b := range ivs[label] {
+				sum += max(0, min(a[1], b[1])-max(a[0], b[0]))
 			}
 		}
+		return sum
+	}
+	from := map[int]int64{} // index in vs -> old voice id
+	fromOv := map[int]float64{}
+	for _, oid := range oids {
+		bi, best := -1, 0.0
+		for i, v := range vs {
+			if x := ov(olds[oid], v.Label); x > best {
+				bi, best = i, x
+			}
+		}
+		if bi >= 0 && best > fromOv[bi] {
+			from[bi], fromOv[bi] = oid, best
+		}
+	}
+	ids := map[string]int64{}
+	inherit := map[int64][]int64{} // old voice id -> the new voice that took its marks
+	for i, v := range vs {
 		var emb, person any
 		if len(v.Embedding) > 0 {
 			emb = scan.F16Blob(v.Embedding)
 		}
 		manual := 0
-		if bestOv > 0 {
-			if olds[best].person.Valid {
-				person = olds[best].person.Int64
+		if oid, ok := from[i]; ok {
+			if olds[oid].person.Valid {
+				person = olds[oid].person.Int64
 			}
-			manual = olds[best].manual
+			manual = olds[oid].manual
 		}
 		res, err := tx.Exec("INSERT INTO voices (file_id, label, seconds, model, emb, person_id, manual) VALUES (?, ?, ?, ?, ?, ?, ?)",
 			id, v.Label, v.Seconds, r.Model, emb, person, manual)
 		if err != nil {
 			return err
 		}
-		nid, _ := res.LastInsertId()
+		nid, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
 		ids[v.Label] = nid
-		if bestOv > 0 {
-			inherit[best] = append(inherit[best], nid)
+		if oid, ok := from[i]; ok {
+			inherit[oid] = append(inherit[oid], nid)
 		}
 	}
 	for _, p := range notPerson {
