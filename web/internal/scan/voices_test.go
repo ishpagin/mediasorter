@@ -212,3 +212,32 @@ func TestClusterVoicesManualMidway(t *testing.T) {
 		t.Fatalf("manual mark overwritten: %+v manual=%d", r, manual)
 	}
 }
+
+func TestRefineVoiceGroups(t *testing.T) {
+	E := [][]float32{
+		{1, 0, 0, 0}, {1, 0.1, 0, 0}, {0, 0, 0, 1}, // 0: two alike + a stranger chained in
+		{1, 0, 0.4, 0}, {1, 0, 0.5, 0}, // 1: the same voice split off
+		{0, 1, 0, 0}, {0, 1, 0.1, 0}, // 2
+		{0, 1, 0, 0.3}, {0, 1, 0, 0.2}, // 3: like 2, but marked "different"
+		{0, 0, 1, 0}, {0, 0, 1, 0.05}, // 4: Маша by hand
+		{0, 0, 1, 0.2}, {0, 0, 1, 0.25}, // 5: Петя by hand
+	}
+	for _, v := range E {
+		normalize(v)
+	}
+	labels := []int{0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5}
+	owner := []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, 7, 7, 9, -1}
+	notSame := map[[2]int]bool{{5, 7}: true, {7, 5}: true}
+	got := refineVoiceGroups(E, labels, notSame, owner, DefaultVoiceOptions())
+	if got[0] != got[1] || got[3] != got[0] || got[4] != got[0] {
+		t.Fatalf("split voice not joined: %v", got)
+	}
+	for i, l := range got {
+		if i != 2 && l == got[2] {
+			t.Fatalf("stranger stays in a group: %v", got)
+		}
+	}
+	if got[5] == got[7] || got[9] == got[11] {
+		t.Fatalf("joined across a 'different' mark or two manual people: %v", got)
+	}
+}

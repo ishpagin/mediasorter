@@ -11,12 +11,16 @@ type VoiceOptions struct {
 	MinFiles     int     // a group heard in this many files becomes a person without a name
 	SuggestMin   int     // a suggestion needs this many videos "one voice, one known face"
 	SuggestShare float64 // ... and this share of such videos of the group
+	Prune        float32 // a voice less similar to its group's centre leaves the group
+	Join         float32 // groups with centres this alike are one voice
 }
 
 // DefaultVoiceOptions: Thr from asr's measurements on WeSpeaker ResNet34-LM means of 8 s+ of speech: one person
 // in two videos 0.877, 26 pairs of different people 0.035-0.518 (median ~0.25). 0.65 stays above all of them.
+// Prune and Join from pillow's archive (2055 voices): Ivan behind the camera split into groups 0.86-0.92 alike,
+// no two different groups between 0.70 and 0.80; a few strangers chained in at 0.15-0.5 to the centre.
 func DefaultVoiceOptions() VoiceOptions {
-	return VoiceOptions{Thr: 0.65, MinFiles: 2, SuggestMin: 2, SuggestShare: 0.6}
+	return VoiceOptions{Thr: 0.65, MinFiles: 2, SuggestMin: 2, SuggestShare: 0.6, Prune: 0.5, Join: 0.8}
 }
 
 // ClusterVoices groups voices of the archive like faces and links each group to a person: the person most manual
@@ -95,6 +99,11 @@ func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 		}
 	}
 	labels := chineseWhispers(idx, sims, o.Thr, 30)
+	owner := make([]int64, len(ids))
+	for i := range ids {
+		owner[i] = pick(manual[i], oldPID[i])
+	}
+	labels = refineVoiceGroups(E, labels, notSame, owner, o)
 	groups := map[int][]int{}
 	for i, l := range labels {
 		groups[l] = append(groups[l], i)
@@ -226,6 +235,86 @@ func ClusterVoices(db *sql.DB, o VoiceOptions) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// refineVoiceGroups fixes what Chinese Whispers does to voices: it chains a stranger in through neighbours and
+// splits one voice heard in hundreds of videos into several groups. A member less similar than Prune to its group's
+// centre leaves it; then groups (2+ voices) with centres at least Join alike join, the closest pair first, never
+// across a "different" pair or two people the user set by hand. owner: the manual person of a voice or -1.
+func refineVoiceGroups(E [][]float32, labels []int, notSame map[[2]int]bool, owner []int64, o VoiceOptions) []int {
+	next := 0
+	for _, l := range labels {
+		next = max(next, l+1)
+	}
+	uniq, C := centroids(E, labels)
+	at := map[int]int{}
+	for i, l := range uniq {
+		at[l] = i
+	}
+	for i, l := range labels {
+		if dot(E[i], C[at[l]]) < o.Prune {
+			labels[i] = next
+			next++
+		}
+	}
+	for {
+		members := map[int][]int{}
+		for i, l := range labels {
+			members[l] = append(members[l], i)
+		}
+		var ls []int
+		for l, ms := range members {
+			if len(ms) >= 2 {
+				ls = append(ls, l)
+			}
+		}
+		sort.Ints(ls)
+		cs := make([][]float32, len(ls))
+		for i, l := range ls {
+			cs[i] = mean(E, members[l])
+		}
+		allowed := func(a, b []int) bool {
+			oa, ob := map[int64]bool{}, map[int64]bool{}
+			for _, x := range a {
+				if owner[x] >= 0 {
+					oa[owner[x]] = true
+				}
+				for _, y := range b {
+					if notSame[[2]int{x, y}] {
+						return false
+					}
+				}
+			}
+			for _, y := range b {
+				if owner[y] >= 0 {
+					ob[owner[y]] = true
+				}
+			}
+			if len(oa) == 0 || len(ob) == 0 {
+				return true
+			}
+			for p := range oa {
+				if ob[p] {
+					return true
+				}
+			}
+			return false
+		}
+		best, bi, bj := float32(-1), -1, -1
+		for i := range cs {
+			for j := i + 1; j < len(cs); j++ {
+				if s := dot(cs[i], cs[j]); s >= o.Join && s > best && allowed(members[ls[i]], members[ls[j]]) {
+					best, bi, bj = s, i, j
+				}
+			}
+		}
+		if bi < 0 {
+			return labels
+		}
+		for _, m := range members[ls[bj]] {
+			labels[m] = ls[bi]
+		}
+	}
 }
 
 func pick(ok bool, p int64) int64 {
