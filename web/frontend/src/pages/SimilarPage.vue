@@ -9,11 +9,12 @@ import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import { api, faceUrl, personLabel, type SimilarPair } from '@/api'
 import { useQuery } from '@/composables/useQuery'
-import VoicePairs from '@/components/VoicePairs.vue'
+import VoiceGroups from '@/components/VoiceGroups.vue'
 import { useActions } from '@/stores/actions'
 
 const { q, set } = useQuery()
 const actions = useActions()
+const tab = computed(() => q('tab', 'faces'))
 const thr = computed(() => Number(q('min', '0.45')) || 0.45)
 const minFiles = computed(() => Number(q('files', '3')) || 3)
 const slider = ref([thr.value])
@@ -33,7 +34,7 @@ async function load() {
     loading.value = false
   }
 }
-watch(() => [thr.value, minFiles.value, actions.version], () => { shown.value = 40; void load() }, { immediate: true })
+watch(() => [tab.value, thr.value, minFiles.value, actions.version], () => { if (tab.value === 'faces') { shown.value = 40; void load() } }, { immediate: true })
 
 async function merge(p: SimilarPair) {
   await actions.run(() => api.merge([p.a.id, p.b.id]), false)
@@ -50,15 +51,21 @@ async function different(p: SimilarPair) {
         <h1 class="text-xl font-semibold tracking-tight">Похожие люди</h1>
         <p class="text-[13px] text-muted-foreground">Часто это один человек, разбитый на два. Бывают и родственники — для них «Это разные люди».</p>
       </div>
-      <label class="flex w-72 items-center gap-3 text-sm">Похожесть от {{ slider[0].toFixed(2) }}
+      <nav class="flex rounded-lg border p-0.5 text-sm">
+        <button v-for="t in [{ v: 'faces', l: 'Лица' }, { v: 'voices', l: 'Голоса' }]" :key="t.v"
+                :class="tab === t.v ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'"
+                class="rounded-md px-3 py-1" @click="set('tab', t.v, 'faces')">{{ t.l }}</button>
+      </nav>
+      <label v-if="tab === 'faces'" class="flex w-72 items-center gap-3 text-sm">Похожесть от {{ slider[0].toFixed(2) }}
         <Slider v-model="slider" :min="0.3" :max="0.8" :step="0.01" class="flex-1" @value-commit="(v: number[]) => set('min', v[0].toFixed(2), '0.45')" />
       </label>
-      <label class="flex items-center gap-2 text-sm">Мин. файлов у каждого
+      <label v-if="tab === 'faces'" class="flex items-center gap-2 text-sm">Мин. файлов у каждого
         <Input type="number" min="1" :model-value="minFiles" class="h-8 w-20"
                @update:model-value="(v) => set('files', Math.max(1, Number(v) || 1), '3')" />
       </label>
     </header>
-    <div class="flex-1 overflow-y-auto px-6 pb-8">
+    <div v-if="tab === 'voices'" class="flex-1 overflow-y-auto px-6 pb-8"><VoiceGroups /></div>
+    <div v-else class="flex-1 overflow-y-auto px-6 pb-8">
       <p class="pb-3 text-sm text-muted-foreground">{{ loading ? 'Сравниваю людей…' : `Найдено пар: ${pairs.length}` }}</p>
       <div class="flex flex-col gap-3">
         <div v-for="p in pairs.slice(0, shown)" :key="p.a.id + ':' + p.b.id"
@@ -80,7 +87,6 @@ async function different(p: SimilarPair) {
         </div>
       </div>
       <div ref="sentinel" class="h-px" />
-      <VoicePairs />
     </div>
   </div>
 </template>

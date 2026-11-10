@@ -182,51 +182,6 @@ func TestVoiceAssign(t *testing.T) {
 	}
 }
 
-func TestVoicesSameConflict(t *testing.T) {
-	mux, d := voiceServer(t,
-		"INSERT INTO voices (id, file_id, label, seconds, model, person_id) VALUES (1, 1, 's1', 9, 'm', 1), (2, 2, 's1', 9, 'm', 2), (3, 2, 's2', 9, 'm', NULL)")
-	var r struct{ Conflict struct{ A, B Person } }
-	if c := do(mux, "POST", "/api/voices/same", `{"a":1,"b":2}`, &r); c != 409 || r.Conflict.A.ID != 1 || r.Conflict.B.Name != "Вася" {
-		t.Fatalf("%d %+v", c, r)
-	}
-	var p1, p2 int64
-	d.QueryRow("SELECT person_id FROM voices WHERE id = 1").Scan(&p1)
-	d.QueryRow("SELECT person_id FROM voices WHERE id = 2").Scan(&p2)
-	if p1 != 1 || p2 != 2 {
-		t.Errorf("changed: %d %d", p1, p2)
-	}
-	d.Exec("INSERT INTO voice_not_person VALUES (3, 1)")
-	if c := do(mux, "POST", "/api/voices/same", `{"a":1,"b":3}`, nil); c != 200 {
-		t.Fatal(c)
-	}
-	d.QueryRow("SELECT person_id FROM voices WHERE id = 3").Scan(&p1)
-	if p1 != 1 {
-		t.Errorf("same: voice 3 has person %d, want 1", p1)
-	}
-	var marks int
-	d.QueryRow("SELECT COUNT(*) FROM voice_not_person WHERE voice_id = 3").Scan(&marks)
-	if marks != 0 {
-		t.Errorf("same left a contradicting mark")
-	}
-}
-
-func TestVoicePairs(t *testing.T) {
-	// a = [1, 0], b = [0.5, 0.866], c = [0.5, -0.866] in float16: a~b and a~c are 0.5, b~c is -0.5
-	mux, _ := voiceServer(t,
-		"INSERT INTO voices (id, file_id, label, seconds, model, cluster, emb) VALUES (1, 1, 's1', 9, 'm', 1, x'003C0000'), (2, 1, 's2', 9, 'm', 2, x'0038ED3A'), (3, 2, 's1', 9, 'm', 3, x'0038EDBA')")
-	var r struct{ Pairs []pairOut }
-	do(mux, "GET", "/api/voices/pairs", "", &r)
-	if len(r.Pairs) != 2 {
-		t.Fatalf("pairs: %+v", r.Pairs)
-	}
-	do(mux, "POST", "/api/voices/notsame", `{"a":2,"b":1}`, nil)
-	r.Pairs = nil
-	do(mux, "GET", "/api/voices/pairs", "", &r)
-	if len(r.Pairs) != 1 {
-		t.Errorf("after notsame: %+v", r.Pairs)
-	}
-}
-
 func TestVoiceAssignSpread(t *testing.T) {
 	mux, d := voiceServer(t,
 		"INSERT INTO voices (id, file_id, label, seconds, model, cluster, person_id) VALUES (1, 1, 's1', 9, 'm', 7, NULL), (2, 2, 's1', 9, 'm', 7, NULL), (3, 2, 's2', 9, 'm', 7, 2), (4, 1, 's2', 9, 'm', 7, NULL)",
@@ -242,5 +197,38 @@ func TestVoiceAssignSpread(t *testing.T) {
 	}
 	if got[2] != 0 || got[3] != 2 || got[4] != 1 {
 		t.Errorf("spread: %v (marked voice and named other person stay, free one follows)", got)
+	}
+}
+
+func TestVoiceGroups(t *testing.T) {
+	mux, d := voiceServer(t,
+		"INSERT INTO files (id, path, kind, taken_at) VALUES (3, '/v/c.mp4', 'video', '2019-05-01 10:00:00')",
+		"INSERT INTO persons (id, name) VALUES (5, NULL)",
+		// cluster 7: an unnamed person in three videos, suggested Петя; cluster 8: Вася by name; cluster 9: one video
+		`INSERT INTO voices (id, file_id, label, seconds, model, cluster, person_id, suggest_id) VALUES
+			(1, 1, 's1', 9, 'm', 7, 5, 1), (2, 2, 's1', 9, 'm', 7, 5, 1), (3, 3, 's1', 9, 'm', 7, 5, NULL),
+			(4, 1, 's2', 9, 'm', 8, 2, NULL), (5, 2, 's2', 9, 'm', 8, 2, NULL), (6, 1, 's3', 9, 'm', 9, NULL, NULL)`,
+		`INSERT INTO speech (file_id, t_start, t_end, text, low, voice_id) VALUES
+			(1, 0, 30, 'длинная', 'длинная', 1), (1, 40, 45, 'привет', 'привет', 1), (2, 3, 3.5, 'а', 'а', 2),
+			(2, 5, 9, 'как дела', 'как дела', 2), (3, 1, 6, 'ну', 'ну', 3),
+			(1, 50, 55, 'вася', 'вася', 4), (2, 50, 55, 'вася', 'вася', 5), (1, 60, 65, 'кто', 'кто', 6)`)
+	var gs []VoiceGroup
+	if c := do(mux, "GET", "/api/voices/groups", "", &gs); c != 200 {
+		t.Fatal(c)
+	}
+	if len(gs) != 1 || gs[0].Cluster != 7 || gs[0].Files != 3 || gs[0].Person != 5 || gs[0].Suggest == nil || gs[0].Suggest.ID != 1 {
+		t.Fatalf("groups: %+v", gs)
+	}
+	if c := gs[0].Clips; len(c) != 3 || c[0].Text != "привет" || c[1].Text != "как дела" || c[2].Taken != "2019-05-01" {
+		t.Fatalf("clips: short phrases from each video: %+v", c)
+	}
+	if c := do(mux, "POST", "/api/voices/groups/7/reject", `{"person":1}`, nil); c != 200 {
+		t.Fatal(c)
+	}
+	var marks, sug int
+	d.QueryRow("SELECT COUNT(*) FROM voice_not_person WHERE person_id = 1").Scan(&marks)
+	d.QueryRow("SELECT COUNT(*) FROM voices WHERE suggest_id IS NOT NULL").Scan(&sug)
+	if marks != 3 || sug != 0 {
+		t.Errorf("reject: marks %d suggests %d", marks, sug)
 	}
 }

@@ -2,16 +2,11 @@ package api
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"math"
 	"net/http"
 	"sort"
-	"strconv"
 
 	"github.com/ishpagin/mediasorter/web/internal/core"
-	"github.com/ishpagin/mediasorter/web/internal/scan"
 )
 
 // VoiceInfo: a speaker of a video. N counts from 1 in order of first appearance.
@@ -23,16 +18,6 @@ type VoiceInfo struct {
 	Suggest     int64  `json:"suggest,omitempty"`
 	SuggestName string `json:"suggestName,omitempty"`
 	Manual      bool   `json:"manual"`
-}
-
-// VoicePick: a voice with a phrase to listen to (its longest one).
-type VoicePick struct {
-	Voice  int64   `json:"voice"`
-	File   int64   `json:"file"`
-	Start  float64 `json:"start"`
-	End    float64 `json:"end"`
-	Person int64   `json:"person,omitempty"`
-	Name   string  `json:"name,omitempty"`
 }
 
 func (s *Server) voicesOf(file int64) ([]VoiceInfo, error) {
@@ -55,25 +40,6 @@ func (s *Server) voicesOf(file int64) ([]VoiceInfo, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
-}
-
-// pick: where to listen to a voice; person is what the caller knows about whose it is.
-func (s *Server) pick(voice, person int64) (VoicePick, error) {
-	v := VoicePick{Voice: voice, Person: person}
-	err := s.DB.QueryRow("SELECT file_id FROM voices WHERE id = ?", voice).Scan(&v.File)
-	if err != nil {
-		return v, err
-	}
-	err = s.DB.QueryRow("SELECT t_start, t_end FROM speech WHERE voice_id = ? ORDER BY t_end - t_start DESC LIMIT 1", voice).Scan(&v.Start, &v.End)
-	if err == sql.ErrNoRows {
-		err = nil
-	}
-	if person != 0 {
-		var n sql.NullString
-		_ = s.DB.QueryRow("SELECT name FROM persons WHERE id = ?", person).Scan(&n)
-		v.Name = n.String
-	}
-	return v, err
 }
 
 func (s *Server) personCard(id int64) (Person, error) {
@@ -176,40 +142,139 @@ func (s *Server) voiceReject(w http.ResponseWriter, r *http.Request) {
 	s.voiceMarkDone(w, r, err, "Запомнил: это не его голос")
 }
 
-type voicePair struct{ A, B int64 }
-
-func readPair(r *http.Request) (voicePair, bool) {
-	var req voicePair
-	return req, readJSON(r, &req) == nil && req.A != 0 && req.B != 0 && req.A != req.B
+// VoiceClip: one short phrase of a voice to listen to.
+type VoiceClip struct {
+	Voice int64   `json:"voice"`
+	File  int64   `json:"file"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Text  string  `json:"text"`
+	Taken string  `json:"taken"`
 }
 
-// POST /api/voices/same {a, b}: one person. Two different people are a conflict (409): the program never merges them.
-func (s *Server) voicesSame(w http.ResponseWriter, r *http.Request) {
-	req, ok := readPair(r)
-	if !ok {
-		http.Error(w, "нужны два разных голоса", http.StatusBadRequest)
-		return
-	}
-	var pa, pb sql.NullInt64
-	errA := s.DB.QueryRow("SELECT person_id FROM voices WHERE id = ?", req.A).Scan(&pa)
-	errB := s.DB.QueryRow("SELECT person_id FROM voices WHERE id = ?", req.B).Scan(&pb)
-	if errors.Is(errA, sql.ErrNoRows) || errors.Is(errB, sql.ErrNoRows) {
-		http.Error(w, "такого голоса нет", http.StatusNotFound)
-		return
-	} else if err := errors.Join(errA, errB); err != nil {
+// VoiceGroup: one voice heard in several videos, still without a name.
+type VoiceGroup struct {
+	Cluster int64       `json:"cluster"`
+	Files   int         `json:"files"`
+	Person  int64       `json:"person,omitempty"` // the unnamed person it already is
+	Suggest *Person     `json:"suggest,omitempty"`
+	Clips   []VoiceClip `json:"clips"`
+}
+
+// GET /api/voices/groups: voices heard in 2+ videos without a named person, most heard first, each with up to
+// 3 short phrases from across the years. The answer goes to the whole group: POST /api/voices/{clip voice}/person
+// spreads to the group, POST /api/voices/groups/{cluster}/reject says "not him" for all of it.
+func (s *Server) voiceGroups(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.DB.Query(`SELECT v.cluster, v.id, v.file_id, COALESCE(v.person_id, 0), p.name IS NOT NULL,
+		COALESCE(v.suggest_id, 0), COALESCE(f.taken_at, '')
+		FROM voices v JOIN files f ON f.id = v.file_id LEFT JOIN persons p ON p.id = v.person_id
+		WHERE v.cluster IS NOT NULL ORDER BY v.cluster, f.taken_at, v.id`)
+	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	if pa.Valid && pb.Valid && pa.Int64 != pb.Int64 {
-		a, err1 := s.personCard(pa.Int64)
-		b, err2 := s.personCard(pb.Int64)
-		if err1 != nil || err2 != nil {
-			fail(w, fmt.Errorf("conflict persons: %v %v", err1, err2), 500)
+	type member struct {
+		id, file int64
+		taken    string
+	}
+	type group struct {
+		files             map[int64]bool
+		persons, suggests map[int64]int
+		named             map[int64]bool
+		members           []member
+	}
+	groups := map[int64]*group{}
+	var order []int64
+	for rows.Next() {
+		var cl, id, file, pid, sug int64
+		var named bool
+		var taken string
+		if err := rows.Scan(&cl, &id, &file, &pid, &named, &sug, &taken); err != nil {
+			rows.Close()
+			fail(w, err, 500)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]any{"conflict": map[string]Person{"a": a, "b": b}})
+		g := groups[cl]
+		if g == nil {
+			g = &group{files: map[int64]bool{}, persons: map[int64]int{}, suggests: map[int64]int{}, named: map[int64]bool{}}
+			groups[cl], order = g, append(order, cl)
+		}
+		g.files[file] = true
+		if pid != 0 {
+			g.persons[pid]++
+			g.named[pid] = named
+		}
+		if sug != 0 {
+			g.suggests[sug]++
+		}
+		g.members = append(g.members, member{id, file, taken})
+	}
+	rows.Close()
+	top := func(m map[int64]int) (best int64) {
+		n := 0
+		for p, c := range m {
+			if c > n || c == n && p < best {
+				best, n = p, c
+			}
+		}
+		return
+	}
+	out := []VoiceGroup{}
+	cards := map[int64]*Person{}
+	for _, cl := range order {
+		g := groups[cl]
+		pid := top(g.persons)
+		if len(g.files) < 2 || g.named[pid] {
+			continue
+		}
+		vg := VoiceGroup{Cluster: cl, Files: len(g.files), Person: pid, Clips: []VoiceClip{}}
+		if sug := top(g.suggests); sug != 0 {
+			if cards[sug] == nil {
+				if p, err := s.personCard(sug); err == nil {
+					cards[sug] = &p
+				}
+			}
+			vg.Suggest = cards[sug]
+		}
+		// the oldest, the middle and the newest video first, then the rest if those have no usable phrase
+		n := len(g.members)
+		try := []int{0, n / 2, n - 1}
+		for i := range n {
+			try = append(try, i)
+		}
+		seen := map[int64]bool{}
+		for _, i := range try {
+			m := g.members[i]
+			if len(vg.Clips) == 3 || seen[m.file] {
+				continue
+			}
+			c := VoiceClip{Voice: m.id, File: m.file, Taken: m.taken[:min(len(m.taken), 10)]}
+			// a phrase of a few seconds: long enough to know the voice, short enough to listen to
+			err := s.DB.QueryRow(`SELECT t_start, t_end, text FROM speech WHERE voice_id = ? AND t_end - t_start >= 1.5
+				ORDER BY ABS(t_end - t_start - 5) LIMIT 1`, m.id).Scan(&c.Start, &c.End, &c.Text)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			} else if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			seen[m.file] = true
+			vg.Clips = append(vg.Clips, c)
+		}
+		if len(vg.Clips) > 0 {
+			out = append(out, vg)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Files > out[j].Files })
+	writeJSON(w, r, out)
+}
+
+// POST /api/voices/groups/{id}/reject {person}: "not him" for every voice of the group, the suggestion goes away.
+func (s *Server) voiceGroupReject(w http.ResponseWriter, r *http.Request) {
+	cl, ok := fileID(r)
+	var req struct{ Person int64 }
+	if !ok || readJSON(r, &req) != nil || req.Person == 0 {
+		http.Error(w, "id?", http.StatusBadRequest)
 		return
 	}
 	tx, err := s.DB.Begin()
@@ -218,222 +283,12 @@ func (s *Server) voicesSame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	pid := pa.Int64
-	if !pa.Valid {
-		pid = pb.Int64
-	}
-	if !pa.Valid && !pb.Valid {
-		var res sql.Result
-		if res, err = tx.Exec("INSERT INTO persons (name) VALUES (NULL)"); err == nil {
-			pid, err = res.LastInsertId()
-		}
-	}
+	_, err = tx.Exec("INSERT OR IGNORE INTO voice_not_person (voice_id, person_id) SELECT id, ? FROM voices WHERE cluster = ?", req.Person, cl)
 	if err == nil {
-		_, err = tx.Exec("UPDATE voices SET person_id = ?, suggest_id = NULL, manual = 1 WHERE id IN (?, ?)", pid, req.A, req.B)
-	}
-	if err == nil { // the user's "same" beats an older "not his voice"
-		_, err = tx.Exec("DELETE FROM voice_not_person WHERE voice_id IN (?, ?) AND person_id = ?", req.A, req.B, pid)
-	}
-	if err == nil {
-		_, err = tx.Exec("DELETE FROM voice_not_same WHERE a = ? AND b = ?", min(req.A, req.B), max(req.A, req.B))
-	}
-	if err == nil {
-		err = core.RefreshPersonStats(tx)
+		_, err = tx.Exec("UPDATE voices SET suggest_id = NULL WHERE cluster = ? AND suggest_id = ?", cl, req.Person)
 	}
 	if err == nil {
 		err = tx.Commit()
 	}
-	s.voiceMarkDone(w, r, err, "Запомнил: это один человек")
-}
-
-// POST /api/voices/notsame {a, b}
-func (s *Server) voicesNotSame(w http.ResponseWriter, r *http.Request) {
-	req, ok := readPair(r)
-	if !ok {
-		http.Error(w, "нужны два разных голоса", http.StatusBadRequest)
-		return
-	}
-	_, err := s.DB.Exec("INSERT OR IGNORE INTO voice_not_same (a, b) VALUES (?, ?)", min(req.A, req.B), max(req.A, req.B))
-	s.voiceMarkDone(w, r, err, "Запомнил: это разные люди")
-}
-
-type pairOut struct {
-	Sim float64   `json:"sim"`
-	A   VoicePick `json:"a"`
-	B   VoicePick `json:"b"`
-}
-
-type sugOut struct {
-	Voice  VoicePick `json:"voice"`
-	Person Person    `json:"person"`
-}
-
-type voiceGroup struct {
-	mean    []float32
-	best    int64 // the voice with most speech: its phrase is played
-	bestSec float64
-	persons map[int64]int
-	ids     []int64
-}
-
-func (g *voiceGroup) person() (best int64) {
-	n := 0
-	for p, c := range g.persons {
-		if c > n || c == n && p < best {
-			best, n = p, c
-		}
-	}
-	return
-}
-
-// GET /api/voices/pairs?min=0.45: groups of voices that sound alike but are not linked (different people or none),
-// plus the voices with a suggested person. The user listens and decides.
-func (s *Server) voicePairs(w http.ResponseWriter, r *http.Request) {
-	lo, err := strconv.ParseFloat(r.URL.Query().Get("min"), 32)
-	if err != nil || lo <= 0 {
-		lo = 0.45
-	}
-	hi := float64(scan.DefaultVoiceOptions().Thr)
-	rows, err := s.DB.Query(`SELECT id, COALESCE(cluster, -id), COALESCE(person_id, 0), seconds, emb FROM voices
-		WHERE emb IS NOT NULL AND model = (SELECT model FROM voices WHERE emb IS NOT NULL GROUP BY model ORDER BY COUNT(*) DESC, model LIMIT 1)`)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	groups := map[int64]*voiceGroup{}
-	var order []int64
-	for rows.Next() {
-		var id, cl, pid int64
-		var sec float64
-		var emb []byte
-		if err := rows.Scan(&id, &cl, &pid, &sec, &emb); err != nil {
-			rows.Close()
-			fail(w, err, 500)
-			return
-		}
-		if len(emb) < 2 {
-			continue
-		}
-		v := scan.Vectors(emb, len(emb)/2)[0]
-		g := groups[cl]
-		if g == nil {
-			g = &voiceGroup{mean: make([]float32, len(v)), persons: map[int64]int{}}
-			groups[cl], order = g, append(order, cl)
-		}
-		if len(v) != len(g.mean) {
-			continue
-		}
-		for i, x := range v {
-			g.mean[i] += x
-		}
-		if pid != 0 {
-			g.persons[pid]++
-		}
-		if g.best == 0 || sec > g.bestSec {
-			g.best, g.bestSec = id, sec
-		}
-		g.ids = append(g.ids, id)
-	}
-	rows.Close()
-	for _, g := range groups {
-		var n float64
-		for _, x := range g.mean {
-			n += float64(x) * float64(x)
-		}
-		if n = math.Sqrt(n); n > 0 {
-			for i := range g.mean {
-				g.mean[i] /= float32(n)
-			}
-		}
-	}
-	notSame := map[voicePair]bool{} // marks may name voices already gone: only live ones are ever looked up
-	nr, err := s.DB.Query("SELECT a, b FROM voice_not_same")
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	for nr.Next() {
-		var p voicePair
-		if nr.Scan(&p.A, &p.B) == nil {
-			notSame[p] = true
-		}
-	}
-	nr.Close()
-	type cand struct {
-		sim  float64
-		a, b *voiceGroup
-	}
-	var cands []cand
-	for i, ka := range order {
-		for _, kb := range order[i+1:] {
-			a, b := groups[ka], groups[kb]
-			pa, pb := a.person(), b.person()
-			if pa != 0 && pa == pb {
-				continue
-			}
-			var dot float64
-			for k := range a.mean {
-				dot += float64(a.mean[k]) * float64(b.mean[k])
-			}
-			if dot < lo || dot >= hi || marked(notSame, a.ids, b.ids) {
-				continue
-			}
-			cands = append(cands, cand{dot, a, b})
-		}
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].sim > cands[j].sim })
-	cands = cands[:min(len(cands), 200)]
-	out := struct {
-		Pairs    []pairOut `json:"pairs"`
-		Suggests []sugOut  `json:"suggests"`
-	}{[]pairOut{}, []sugOut{}}
-	for _, c := range cands {
-		a, err1 := s.pick(c.a.best, c.a.person())
-		b, err2 := s.pick(c.b.best, c.b.person())
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		out.Pairs = append(out.Pairs, pairOut{c.sim, a, b})
-	}
-	sr, err := s.DB.Query(`SELECT id, suggest_id FROM voices WHERE person_id IS NULL AND suggest_id IS NOT NULL
-		AND suggest_id IN (SELECT id FROM persons)
-		AND NOT EXISTS (SELECT 1 FROM voice_not_person n WHERE n.voice_id = voices.id AND n.person_id = voices.suggest_id)`)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	type sug struct{ voice, person int64 }
-	var sugs []sug
-	for sr.Next() {
-		var x sug
-		if sr.Scan(&x.voice, &x.person) == nil {
-			sugs = append(sugs, x)
-		}
-	}
-	sr.Close()
-	cards := map[int64]Person{} // one person is suggested for hundreds of voices, its best face is a sort over all its faces
-	for _, x := range sugs {
-		v, err1 := s.pick(x.voice, 0)
-		p, err2 := cards[x.person], error(nil)
-		if p.ID == 0 {
-			if p, err2 = s.personCard(x.person); err2 == nil {
-				cards[x.person] = p
-			}
-		}
-		if err1 == nil && err2 == nil {
-			out.Suggests = append(out.Suggests, sugOut{v, p})
-		}
-	}
-	writeJSON(w, r, out)
-}
-
-func marked(m map[voicePair]bool, as, bs []int64) bool {
-	for _, a := range as {
-		for _, b := range bs {
-			if m[voicePair{min(a, b), max(a, b)}] {
-				return true
-			}
-		}
-	}
-	return false
+	s.voiceMarkDone(w, r, err, "Запомнил: это не он")
 }

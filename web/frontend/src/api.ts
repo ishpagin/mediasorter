@@ -40,13 +40,9 @@ export interface Unit { file: number; path: string; person: number | null; faces
 
 export interface SimilarPair { sim: number; a: Person; b: Person; facesA: number[]; facesB: number[] }
 
-export interface VoicePick { voice: number; file: number; start: number; end: number; person?: number; name?: string }
-export interface VoicePairs {
-  pairs: { sim: number; a: VoicePick; b: VoicePick }[]
-  suggests: { voice: VoicePick; person: Person }[]
-}
-// two voices already tied to different people: nothing was changed, the user decides
-export interface VoiceConflict { a: Person; b: Person }
+// one short phrase of a voice; a voice heard in several videos without a name, the answer goes to the whole group
+export interface VoiceClip { voice: number; file: number; start: number; end: number; text: string; taken: string }
+export interface VoiceGroup { cluster: number; files: number; person?: number; suggest?: Person; clips: VoiceClip[] }
 
 export const personLabel = (p: { id: number; name?: string }) => p.name || `person_${p.id}`
 
@@ -114,14 +110,6 @@ async function post<T>(url: string, body: unknown = {}, method = 'POST'): Promis
   const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (!r.ok) throw new Error((await r.text()).trim() || `${r.status}`)
   return r.json() as Promise<T>
-}
-
-// 409 with a body is the conflict of /api/voices/same, not an error
-async function voicesSame(a: number, b: number): Promise<ActionResp | { conflict: VoiceConflict }> {
-  const r = await fetch('/api/voices/same', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ a, b }) })
-  if (r.status === 409) return r.json()
-  if (!r.ok) throw new Error((await r.text()).trim() || `${r.status}`)
-  return r.json()
 }
 
 // the desktop app's own endpoints (absent on a server: 404)
@@ -192,9 +180,8 @@ export const api = {
   startJob: (name: string) => post<Job>('/api/jobs', { name }),
   speech: (id: number) => get<Speech>(`/api/speech?id=${id}`),
   voicePerson: (id: number, body: { person?: number; create?: boolean; clear?: boolean }) => post<ActionResp>(`/api/voices/${id}/person`, body),
-  voicePairs: () => get<VoicePairs>('/api/voices/pairs'),
-  voicesSame,
-  voicesNotSame: (a: number, b: number) => post<ActionResp>('/api/voices/notsame', { a, b }),
+  voiceGroups: () => get<VoiceGroup[]>('/api/voices/groups'),
+  voiceGroupReject: (cluster: number, person: number) => post<ActionResp>(`/api/voices/groups/${cluster}/reject`, { person }),
   voiceReject: (id: number, person: number) => post<ActionResp>(`/api/voices/${id}/reject`, { person }),
 }
 
