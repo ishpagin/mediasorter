@@ -72,6 +72,8 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/voices/{id}/person", s.voicePerson)
 	mux.HandleFunc("POST /api/voices/{id}/reject", s.voiceReject)
 	mux.HandleFunc("GET /api/voices/groups", s.voiceGroups)
+	mux.HandleFunc("POST /api/person/{id}/voices/unlink", s.personVoicesUnlink)
+	mux.HandleFunc("POST /api/person/{id}/voices/reject", s.personVoicesReject)
 	mux.HandleFunc("POST /api/voices/groups/{id}/reject", s.voiceGroupReject)
 	mux.HandleFunc("GET /api/stacks", s.stacks)
 	mux.HandleFunc("GET /api/copies", s.copies)

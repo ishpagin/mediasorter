@@ -237,6 +237,9 @@ type PersonInfo struct {
 	Hidden      bool     `json:"hidden"`
 	SkipCollect bool     `json:"skipCollect"`
 	Co          []Person `json:"co"` // who appears together with them, most often first (N = files together)
+	Faces       int      `json:"faces"`
+	Voices      int      `json:"voices"`
+	Suggest     *Person  `json:"suggest,omitempty"` // whose voice this probably is (a person by faces), the user decides
 }
 
 // GET /api/person/{id}
@@ -248,8 +251,8 @@ func (s *Server) person(w http.ResponseWriter, r *http.Request) {
 	}
 	var p PersonInfo
 	var name sql.NullString
-	err := s.DB.QueryRow("SELECT id, name, n_files, hidden, skip_collect FROM persons WHERE id = ?", id).
-		Scan(&p.ID, &name, &p.Files, &p.Hidden, &p.SkipCollect)
+	err := s.DB.QueryRow("SELECT id, name, n_files, hidden, skip_collect, n_faces, n_voices FROM persons WHERE id = ?", id).
+		Scan(&p.ID, &name, &p.Files, &p.Hidden, &p.SkipCollect, &p.Faces, &p.Voices)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "такого человека нет (возможно, его объединили с другим или пересчитали кластеры)", http.StatusNotFound)
 		return
@@ -274,6 +277,13 @@ func (s *Server) person(w http.ResponseWriter, r *http.Request) {
 			p.Co = append(p.Co, c)
 		}
 	}
+	var sug int64
+	if err := s.DB.QueryRow(`SELECT suggest_id FROM voices WHERE person_id = ? AND suggest_id IS NOT NULL AND suggest_id != ?
+		GROUP BY suggest_id ORDER BY COUNT(*) DESC, suggest_id LIMIT 1`, id, id).Scan(&sug); err == nil {
+		if c, err := s.personCard(sug); err == nil {
+			p.Suggest = &c
+		}
+	}
 	writeJSON(w, r, p)
 }
 
@@ -292,6 +302,10 @@ func (s *Server) personFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	if q.Get("mode") == "voice" {
+		s.personVoiceFiles(w, r, id)
+		return
+	}
 	having, ok := personModes[q.Get("mode")]
 	if !ok {
 		having = ""

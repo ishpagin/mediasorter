@@ -33,6 +33,9 @@ export interface PersonInfo {
   hidden: boolean
   skipCollect: boolean
   co: Person[] // who appears with them, n = files together
+  faces: number
+  voices: number
+  suggest?: Person // whose voice this probably is
 }
 
 // who is where on a file: one per person per file, ungrouped faces one by one
@@ -181,6 +184,8 @@ export const api = {
   speech: (id: number) => get<Speech>(`/api/speech?id=${id}`),
   voicePerson: (id: number, body: { person?: number; create?: boolean; clear?: boolean }) => post<ActionResp>(`/api/voices/${id}/person`, body),
   voiceGroups: () => get<VoiceGroup[]>('/api/voices/groups'),
+  personVoicesUnlink: (id: number, files: number[]) => post<ActionResp>(`/api/person/${id}/voices/unlink`, { files }),
+  personVoicesReject: (id: number, person: number) => post<ActionResp>(`/api/person/${id}/voices/reject`, { person }),
   voiceGroupReject: (cluster: number, person: number) => post<ActionResp>(`/api/voices/groups/${cluster}/reject`, { person }),
   voiceReject: (id: number, person: number) => post<ActionResp>(`/api/voices/${id}/reject`, { person }),
 }

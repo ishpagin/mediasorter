@@ -4,14 +4,14 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { ArrowLeft, Eye, EyeOff, Link2, UserX } from '@lucide/vue'
+import { ArrowLeft, Check, Eye, EyeOff, Link2, UserX, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import ListView from '@/components/ListView.vue'
 import PersonPicker from '@/components/PersonPicker.vue'
-import { api, personLabel, type PersonInfo } from '@/api'
+import { api, faceUrl, personLabel, type PersonInfo } from '@/api'
 import { useFileList } from '@/composables/useFileList'
 import { useQuery } from '@/composables/useQuery'
 import { useActions } from '@/stores/actions'
@@ -25,13 +25,20 @@ const MODES = [
   { v: 'alone', label: 'только он(а) в кадре', title: 'На фото нет ни одного другого лица, даже незнакомого' },
   { v: 'noknown', label: 'без других знакомых', title: 'Незнакомые на фоне допускаются' },
   { v: 'with', label: 'с другими' },
+  { v: 'voice', label: 'голос', title: 'Видео, где слышен его голос. Двойной клик открывает видео на его фразе' },
 ]
 const id = computed(() => Number(q('id')) || 0)
-const mode = computed(() => (MODES.some((m) => m.v === q('mode')) ? q('mode') : 'all'))
+const info = ref<PersonInfo | null>(null)
+// heard, never seen: the face modes mean nothing, the voice is what there is
+const voiceOnly = computed(() => !!info.value && info.value.faces === 0 && info.value.voices > 0)
+const modes = computed(() => MODES.filter((m) => (m.v === 'voice' ? !!info.value?.voices : !voiceOnly.value || m.v === 'all')))
+const mode = computed(() => {
+  const m = q('mode', voiceOnly.value ? 'voice' : 'all')
+  return modes.value.some((x) => x.v === m) ? m : 'all'
+})
 const whole = computed(() => q('whole') !== '0')
 const withIds = computed(() => q('with').split(',').map(Number).filter(Boolean))
 
-const info = ref<PersonInfo | null>(null)
 const missing = ref('')
 const name = ref('')
 async function loadInfo() {
@@ -48,7 +55,8 @@ async function loadInfo() {
 watch(() => [id.value, actions.version], loadInfo, { immediate: true })
 
 const { data, loading, error } = useFileList((p, signal) => api.personFiles(id.value, p, signal),
-  () => (id.value ? { mode: mode.value, with: withIds.value.join(','), whole: whole.value ? '' : '0' } : null))
+  () => (id.value && info.value?.id === id.value
+    ? { mode: mode.value, with: withIds.value.join(','), whole: whole.value || mode.value === 'voice' ? '' : '0' } : null))
 
 async function saveName() {
   if (!info.value || name.value.trim() === info.value.name) return
@@ -82,6 +90,19 @@ async function remap() {
 async function unlink(ids: number[]) {
   await actions.run(() => api.unlink(id.value, ids))
 }
+const unlinkVoice = (ids: number[]) => actions.run(() => api.personVoicesUnlink(id.value, ids), false)
+
+// "this voice is Petya's": merge into the person by faces and go there
+async function acceptSuggest() {
+  const to = info.value?.suggest?.id
+  if (!to) return
+  const r = await actions.run(() => api.merge([to, id.value]), false)
+  if (r) void router.push({ path: '/person', query: { id: to } })
+}
+async function rejectSuggest() {
+  const p = info.value?.suggest
+  if (p) await actions.run(() => api.personVoicesReject(id.value, p.id), false)
+}
 </script>
 
 <template>
@@ -95,7 +116,7 @@ async function unlink(ids: number[]) {
         <div class="flex flex-wrap items-center gap-3">
           <Input v-model="name" :placeholder="`person_${info.id}`" class="h-9 w-72 text-lg font-semibold" aria-label="Имя"
                  @keydown.enter="($event.target as HTMLInputElement).blur()" @blur="saveName" />
-          <span class="text-sm text-muted-foreground">#{{ info.id }} · {{ info.files.toLocaleString('ru') }} файлов</span>
+          <span class="text-sm text-muted-foreground">#{{ info.id }} · {{ info.files.toLocaleString('ru') }} {{ voiceOnly ? 'видео с голосом, лиц нет' : 'файлов' }}</span>
           <Button size="sm" variant="outline" @click="toggleHidden"><Eye v-if="info.hidden" /><EyeOff v-else />{{ info.hidden ? 'Показать' : 'Скрыть' }}</Button>
           <label class="flex items-center gap-2 text-sm" title="«По людям» не будет создавать подборку для этого человека">
             <Switch :model-value="info.skipCollect" @update:model-value="setSkip" />Не раскладывать по подборкам (это я)
@@ -110,18 +131,25 @@ async function unlink(ids: number[]) {
             </PopoverContent>
           </Popover>
         </div>
+        <div v-if="voiceOnly && info.suggest" class="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-3 text-sm">
+          <img v-if="info.suggest.face" :src="faceUrl(info.suggest.face)" alt="" class="size-10 rounded-lg object-cover" />
+          <span>Похоже, это голос: <b>{{ personLabel(info.suggest) }}</b></span>
+          <Button size="sm" :disabled="actions.busy" @click="acceptSuggest"><Check />Да, объединить</Button>
+          <Button size="sm" variant="outline" :disabled="actions.busy" @click="rejectSuggest"><X />Нет, это не он</Button>
+        </div>
+        <p v-if="mode === 'voice'" class="text-[13px] text-muted-foreground">Видео, где он говорит. Лица на превью могут быть чужими: это кто был в кадре, а не кто говорит. Двойной клик откроет видео на его фразе.</p>
         <p v-if="!info.name" class="text-[13px] text-muted-foreground">«По людям» раскладывает только по подписанным людям — дай имя, чтобы у него была своя подборка.</p>
         <div class="flex flex-wrap items-center gap-3">
           <div class="inline-flex rounded-lg border p-0.5">
-            <Button v-for="m in MODES" :key="m.v" size="xs" :variant="mode === m.v ? 'secondary' : 'ghost'" :title="m.title"
+            <Button v-for="m in modes" :key="m.v" size="xs" :variant="mode === m.v ? 'secondary' : 'ghost'" :title="m.title"
                     @click="set('mode', m.v, 'all')">{{ m.label }}</Button>
           </div>
-          <label class="flex items-center gap-2 text-sm" title="Показывать весь кадр, а не только лицо">
+          <label v-if="mode !== 'voice'" class="flex items-center gap-2 text-sm" title="Показывать весь кадр, а не только лицо">
             <Switch :model-value="whole" @update:model-value="(v) => set('whole', v ? '' : '0')" />Целые фото
           </label>
         </div>
         <div v-if="info.co.length" class="flex flex-wrap items-center gap-1.5 text-sm">
-          <span class="mr-1 text-muted-foreground">С кем в кадре:</span>
+          <span class="mr-1 text-muted-foreground">{{ voiceOnly ? 'Кто в кадре в этих видео:' : 'С кем в кадре:' }}</span>
           <Button v-for="c in info.co.slice(0, coShown)" :key="c.id" size="xs" :variant="withIds.includes(c.id) ? 'default' : 'outline'"
                   @click="toggleWith(c.id)">{{ c.name }} <span class="opacity-60">{{ c.n }}</span></Button>
           <Button v-if="info.co.length > coShown" size="xs" variant="link" @click="coShown = info.co.length">ещё {{ info.co.length - coShown }}</Button>
@@ -131,7 +159,8 @@ async function unlink(ids: number[]) {
     </header>
     <ListView v-if="info" :data="data" :loading="loading" :error="error" :person="info.id">
       <template #actions="{ ids }">
-        <Button variant="outline" size="sm" :disabled="actions.busy" @click="unlink(ids)"><UserX />Это не {{ info.name || 'он(а)' }}</Button>
+        <Button v-if="mode === 'voice'" variant="outline" size="sm" :disabled="actions.busy" @click="unlinkVoice(ids)"><UserX />Это не его голос</Button>
+        <Button v-else variant="outline" size="sm" :disabled="actions.busy" @click="unlink(ids)"><UserX />Это не {{ info.name || 'он(а)' }}</Button>
       </template>
     </ListView>
   </div>
