@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 
+	mdb "github.com/ishpagin/mediasorter/web/internal/db"
 	"github.com/ishpagin/mediasorter/web/internal/vision"
 )
 
@@ -60,6 +61,9 @@ var Categories = []Category{
 var peopleCategories = map[string]bool{"Портрет и селфи": true, "Группа людей": true}
 
 const otherCategory = "Прочее"
+
+// LiveCategory: rank 1 of every live photo (db.LivePhoto), set by duration, not by CLIP.
+const LiveCategory = "Живые фото"
 
 // FileEmbeddings: the file ids (ascending) and their mean scene vectors (videos average their previews).
 func FileEmbeddings(db *sql.DB) ([]int64, [][]float32, error) {
@@ -164,6 +168,16 @@ func Tag(db *sql.DB, text *vision.Clip) error {
 		faces[id] = true
 	}
 	rows.Close()
+	live := map[int64]bool{}
+	if rows, err = db.Query("SELECT id FROM files WHERE " + mdb.LivePhoto); err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		live[id] = true
+	}
+	rows.Close()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -199,9 +213,16 @@ func Tag(db *sql.DB, text *vision.Clip) error {
 			order[j] = j
 		}
 		sort.SliceStable(order, func(a, b int) bool { return logits[order[a]] > logits[order[b]] })
-		for r := 0; r < 3; r++ {
+		rank := 1
+		if live[fid] { // the scene still fills ranks 2 and 3
+			if _, err := ins.Exec(fid, 1, LiveCategory, 1.0); err != nil {
+				return err
+			}
+			rank = 2
+		}
+		for r := 0; rank <= 3; r, rank = r+1, rank+1 {
 			j := order[r]
-			if _, err := ins.Exec(fid, r+1, Categories[j].Label, logits[j]/sum); err != nil {
+			if _, err := ins.Exec(fid, rank, Categories[j].Label, logits[j]/sum); err != nil {
 				return err
 			}
 		}

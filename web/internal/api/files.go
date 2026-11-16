@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+
+	"github.com/ishpagin/mediasorter/web/internal/db"
 )
 
 // Item is one file in a list; the UI builds its caption from these fields.
@@ -61,7 +63,7 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request) {
 	}
 	kindCond := "1"
 	if v.onlyVideo {
-		kindCond = "kind = 'video'"
+		kindCond = "kind = 'video' AND NOT COALESCE(" + db.LivePhoto + ", 0)" // live photos live with photos
 	}
 	var resp FilesResp
 	var err error
@@ -142,11 +144,15 @@ func (s *Server) filterList(r *http.Request, items []Item, alwaysVideo bool) (ou
 	if err != nil {
 		return nil, 0, 0, err
 	}
+	live, err := s.ids("SELECT id FROM files WHERE " + db.LivePhoto)
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	keepVideo := alwaysVideo || r.URL.Query().Get("video") == "1"
 	keepMoved := r.URL.Query().Get("moved") == "1"
 	out = []Item{}
 	for _, it := range items {
-		if !keepVideo && it.Kind == "video" {
+		if !keepVideo && it.Kind == "video" && !live[it.ID] {
 			hiddenVideo++
 			continue
 		}
@@ -252,7 +258,12 @@ func (s *Server) inCollection() (map[int64]string, error) {
 
 // movedToCollection: files moved out of the archive into a collection (copies stay in the archive: not here).
 func (s *Server) movedToCollection() (map[int64]bool, error) {
-	rows, err := s.DB.Query(`SELECT f.id FROM files f JOIN collection_files c ON c.file_id = f.id AND c.link_path = f.path`)
+	return s.ids(`SELECT f.id FROM files f JOIN collection_files c ON c.file_id = f.id AND c.link_path = f.path`)
+}
+
+// ids: the set of ids a one-column query returns.
+func (s *Server) ids(query string) (map[int64]bool, error) {
+	rows, err := s.DB.Query(query)
 	if err != nil {
 		return nil, err
 	}

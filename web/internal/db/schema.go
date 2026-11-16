@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// LivePhoto: SQL condition on files for a "live photo", an iPhone shot saved as a ~2 s video.
+// These count as photos, not videos.
+const LivePhoto = "(kind = 'video' AND duration <= 3.5)"
+
 // Schema: every table, the same as the Python scanner creates (photosorter.py, scenes.py, stacks.py),
 // so a database made by either side works with the other.
 const Schema = `

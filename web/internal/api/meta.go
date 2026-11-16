@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/ishpagin/mediasorter/web/internal/db"
 	"net/http"
 	"strconv"
 
@@ -59,7 +60,7 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM files WHERE kind = 'video'").Scan(&m.Videos); err != nil {
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM files WHERE kind = 'video' AND NOT COALESCE(" + db.LivePhoto + ", 0)").Scan(&m.Videos); err != nil {
 		fail(w, err, 500)
 		return
 	}
