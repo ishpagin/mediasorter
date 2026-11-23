@@ -22,6 +22,7 @@ type Config struct {
 
 	ImportDir   string // MS_IMPORT_DIR: where /api/import puts mail photos; empty = import off
 	ImportToken string // MS_IMPORT_TOKEN: Bearer token of /api/import; empty = import off
+	Owner       string // MS_OWNER: the board login allowed to empty the trash; empty = anyone (local run)
 }
 
 // PathMapping: a Windows share prefix of old DB rows (//nas/home/) and its mount point here.

@@ -110,7 +110,7 @@ func main() {
 	}
 	cfg := &core.Config{DBPath: dbPath, PathMap: core.ParsePathMap(os.Getenv("PS_PATH_MAP")),
 		Protected: env("MS_PROTECTED", "/ps/protected.txt"),
-		ImportDir: os.Getenv("MS_IMPORT_DIR"), ImportToken: os.Getenv("MS_IMPORT_TOKEN")}
+		ImportDir: os.Getenv("MS_IMPORT_DIR"), ImportToken: os.Getenv("MS_IMPORT_TOKEN"), Owner: os.Getenv("MS_OWNER")}
 	if err := core.InitUndo(d); err != nil {
 		log.Fatalf("undo table: %v", err)
 	}
@@ -142,6 +142,16 @@ func main() {
 		hour, _ := strconv.Atoi(env("MS_SCAN_HOUR", "3"))
 		eng.Schedule(hour)
 	}
+	go func() { // the trash forgets files cleaned out of the quarantine by hand: at start and once a day
+		for {
+			if n, err := core.PruneTrash(d); err != nil {
+				log.Printf("trash prune: %v", err)
+			} else if n > 0 {
+				log.Printf("trash prune: forgot %d deletions without a file", n)
+			}
+			time.Sleep(24 * time.Hour)
+		}
+	}()
 	mux, err := server.Mux(d, cfg, mlSide)
 	if err != nil {
 		log.Fatal(err)

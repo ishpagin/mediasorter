@@ -101,6 +101,13 @@ export interface ActionResp {
   person?: number // where the faces went (remap)
 }
 
+export interface TrashItem {
+  id: number; name: string; path: string; kind: '' | 'image' | 'video'; size: number; at: string
+  inQuarantine: boolean // false = only the DB rows were removed, no file to show
+  preview: boolean
+}
+export interface TrashResp { items: TrashItem[]; bytes: number; canEmpty: boolean }
+
 export interface CollectTarget { collection?: number; person?: number; new?: string }
 
 async function get<T>(url: string, signal?: AbortSignal): Promise<T> {
@@ -188,9 +195,13 @@ export const api = {
   personVoicesReject: (id: number, person: number) => post<ActionResp>(`/api/person/${id}/voices/reject`, { person }),
   voiceGroupReject: (cluster: number, person: number) => post<ActionResp>(`/api/voices/groups/${cluster}/reject`, { person }),
   voiceReject: (id: number, person: number) => post<ActionResp>(`/api/voices/${id}/reject`, { person }),
+  trash: () => get<TrashResp>('/api/trash'),
+  trashRestore: (ids: number[]) => post<ActionResp>('/api/trash/restore', { ids }),
+  trashEmpty: () => post<ActionResp>('/api/trash/empty'),
 }
 
 export const faceUrl = (id: number) => `/thumb/face/${id}`
 
 export const previewUrl = (id: number) => `/preview/${id}`
+export const trashPreviewUrl = (id: number) => `/trash/preview/${id}`
 export const originalUrl = (id: number) => `/original/${id}`

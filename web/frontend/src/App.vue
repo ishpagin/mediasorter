@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
-  Bookmark, Copy, FolderSync, Image, Images, Layers, Link, Moon, Plug, Plus, RefreshCw, Search, Sun, Undo2, UserMinus,
+  Bookmark, Copy, FolderSync, Image, Images, Layers, Link, Moon, Plug, Plus, RefreshCw, Search, Sun, Trash2, Undo2, UserMinus,
   UserPlus, Users, Video,
 } from '@lucide/vue'
 import { useRoute } from 'vue-router'
@@ -55,6 +55,7 @@ const nav = [
   { title: 'Чистка', items: [
     { to: '/stacks', label: 'Стопки похожих', icon: Layers },
     { to: '/copies', label: 'Копии', icon: Copy },
+    { to: '/trash', label: 'Корзина', icon: Trash2 },
   ] },
   { title: 'Отправить', items: [
     { to: '/collections', label: 'Подборки', icon: Bookmark },

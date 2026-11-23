@@ -288,6 +288,9 @@ func (c *Config) Restore(db *sql.DB, logIDs []int64) (int, []Failure, error) {
 			done++
 		}
 	}
+	if err := dropDeadUndo(db); err != nil { // restored from the trash page: Ctrl+Z has nothing left there
+		return done, problems, err
+	}
 	return done, problems, refreshPersonStats(db)
 }
 
