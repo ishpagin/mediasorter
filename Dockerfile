@@ -36,10 +36,13 @@ RUN curl -sSLf --retry 5 -o b.zip https://github.com/deepinsight/insightface/rel
 # 4. what runs
 FROM ${BASE}
 ARG ORT=onnxruntime-linux-x64-1.24.4
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg tzdata \
- && mkdir -p /opt/ort && curl -sSLf --retry 5 "https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/$ORT.tgz" \
-    | tar -xz -C /opt/ort --strip-components=1 \
- && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /opt/ort/include
+# the same libraries as the GitHub release tarballs, from NuGet: github.com/microsoft/onnxruntime went 404 (2026-11-23);
+# ORT only picks GPU (a name with "gpu") or CPU
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip ffmpeg tzdata \
+ && case "$ORT" in *gpu*) pkg=microsoft.ml.onnxruntime.gpu.linux ;; *) pkg=microsoft.ml.onnxruntime ;; esac \
+ && curl -sSLf --retry 5 -o /tmp/ort.nupkg "https://api.nuget.org/v3-flatcontainer/$pkg/1.24.4/$pkg.1.24.4.nupkg" \
+ && mkdir -p /opt/ort/lib && unzip -j -q /tmp/ort.nupkg 'runtimes/linux-x64/native/*' -d /opt/ort/lib && rm /tmp/ort.nupkg \
+ && apt-get purge -y curl unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 COPY --from=models /models /app/models
 COPY --from=server /mediasorter-web /usr/local/bin/mediasorter-web
 COPY protected.txt /app/protected.txt
