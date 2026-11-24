@@ -309,7 +309,8 @@ const info = computed(() => {
   .thumb:hover { opacity: .85; }
 }
 .acts { display: flex; align-items: center; gap: 12px; }
-.viewer.bare .top, .viewer.bare .strip { display: none; }
+.top, .strip { transition: opacity 200ms var(--ms-ease); }
+.viewer.bare .top, .viewer.bare .strip { opacity: 0; pointer-events: none; } /* hidden but in place: the photo does not jump */
 @media (pointer: coarse) {
   .keys, .nav { display: none; } /* keys and arrows: the fingers swipe */
   .media { touch-action: none; -webkit-touch-callout: none; }
