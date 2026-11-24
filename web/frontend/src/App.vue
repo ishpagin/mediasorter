@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
-  Bookmark, Copy, FolderSync, Image, Images, Layers, Link, Moon, Plug, Plus, RefreshCw, Search, Sun, Trash2, Undo2, UserMinus,
+  Bookmark, Copy, FolderSync, House, Image, Images, Layers, Link, Moon, Plug, Plus, RefreshCw, Search, Sun, Trash2, Undo2, UserMinus,
   UserPlus, Users, Video,
 } from '@lucide/vue'
 import { useRoute } from 'vue-router'
@@ -24,6 +24,8 @@ const actions = useActions()
 const jobs = useJobs()
 const route = useRoute()
 const isDesktop = ref(false) // the desktop app (local mode) has its own settings page
+// link back to my homenet only on my own server copy, not in the public builds
+const homenet = location.hostname.endsWith('.homenet.shpagin.dev')
 const meta = computed(() => actions.meta)
 const newName = ref('')
 const newOpen = ref(false)
@@ -93,10 +95,16 @@ onMounted(() => {
     <RouterView v-if="route.meta.bare" />
     <div v-else class="grid h-full grid-cols-[248px_1fr]">
       <aside class="flex flex-col gap-4 overflow-y-auto border-r bg-sidebar px-3 py-4 text-sidebar-foreground">
-        <RouterLink to="/files" class="flex items-center gap-2.5 px-2 py-1 text-[17px] font-semibold">
-          <img src="/mark.svg" alt="" width="28" height="28" />
-          Mediasorter
-        </RouterLink>
+        <div class="flex items-center justify-between gap-1">
+          <RouterLink to="/files" class="flex items-center gap-2.5 px-2 py-1 text-[17px] font-semibold">
+            <img src="/mark.svg" alt="" width="28" height="28" />
+            Mediasorter
+          </RouterLink>
+          <a v-if="homenet" href="https://homenet.shpagin.dev/" aria-label="homenet" title="homenet"
+             class="-my-2 flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-ring">
+            <House class="size-4" aria-hidden="true" />
+          </a>
+        </div>
         <nav class="flex flex-col gap-3.5">
           <section v-for="g in nav" :key="g.title">
             <h3 class="mb-1 px-2.5 text-xs font-medium text-muted-foreground">{{ g.title }}</h3>
