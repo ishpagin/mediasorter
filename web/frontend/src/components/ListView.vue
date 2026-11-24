@@ -21,7 +21,7 @@ const settings = useSettings()
 
 <template>
   <div v-if="data && ((data.hiddenVideo && !videosPage) || data.hiddenMoved)"
-       class="flex flex-wrap items-center gap-6 px-6 pb-2 text-[13px] text-muted-foreground">
+       class="flex flex-wrap items-center gap-6 px-3 md:px-6 pb-2 text-[13px] text-muted-foreground">
     <span v-if="data.hiddenVideo && !videosPage">
       Скрыто видео: {{ data.hiddenVideo.toLocaleString('ru') }}
       <Button variant="link" size="xs" class="px-1" @click="settings.showVideo = true">показать</Button>
@@ -34,8 +34,8 @@ const settings = useSettings()
   <div class="relative mx-6 h-0.5 shrink-0 overflow-hidden" :class="{ 'opacity-0': !loading }">
     <div class="loading-bar absolute inset-y-0 w-1/3 rounded bg-[var(--ms-pick)]" />
   </div>
-  <p v-if="error" class="px-6 text-destructive">{{ error }}</p>
-  <div v-else-if="data && !data.items.length && !loading" class="flex flex-col items-center gap-2 px-6 py-16 text-muted-foreground">
+  <p v-if="error" class="px-3 md:px-6 text-destructive">{{ error }}</p>
+  <div v-else-if="data && !data.items.length && !loading" class="flex flex-col items-center gap-2 px-3 md:px-6 py-16 text-muted-foreground">
     <ImageOff class="size-8" />
     <p>{{ empty ?? 'Под эти фильтры ничего не нашлось.' }}</p>
   </div>

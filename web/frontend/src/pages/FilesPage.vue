@@ -27,7 +27,7 @@ const cats = computed(() => data.value?.cats ?? [])
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-wrap items-center gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-wrap items-center gap-3 px-3 md:px-6 pb-3 pt-4">
       <h1 class="mr-auto text-xl font-semibold tracking-tight">{{ title }}</h1>
       <Select :model-value="q('year') || ALL" @update:model-value="(v) => set('year', String(v), ALL)">
         <SelectTrigger size="sm" class="w-36" aria-label="Год"><SelectValue /></SelectTrigger>

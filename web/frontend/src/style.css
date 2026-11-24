@@ -133,7 +133,18 @@
     }
 }
 /* app */
-html, body, #app { height: 100%; }
+html, body { height: 100%; }
+#app { height: 100%; height: 100dvh; } /* dvh: follows the phone's url bar */
+html {
+  -webkit-tap-highlight-color: transparent; /* no gray flash on tap */
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none; /* an app, not a page: no pull-to-refresh */
+}
+button, a, label, [role="button"] { touch-action: manipulation; }
+button, [role="button"], [role="tab"], nav a { -webkit-user-select: none; user-select: none; }
+@media (pointer: coarse) {
+  input, textarea, select { font-size: 16px; } /* under 16px the phone zooms into the field */
+}
 body { -webkit-font-smoothing: antialiased; }
 :root { --ms-ease: cubic-bezier(0.2, 0.8, 0.2, 1); --ms-pick: var(--color-sky-500); }
 @media (prefers-reduced-motion: reduce) {

@@ -107,7 +107,7 @@ async function rejectSuggest() {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-col gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-col gap-3 px-3 md:px-6 pb-3 pt-4">
       <RouterLink to="/people" class="flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft class="size-4" />Ко всем людям
       </RouterLink>

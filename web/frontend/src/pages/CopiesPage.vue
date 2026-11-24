@@ -28,7 +28,7 @@ const gb = computed(() => ((data.value?.bytes ?? 0) / 2 ** 30).toFixed(1))
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-col gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-col gap-3 px-3 md:px-6 pb-3 pt-4">
       <div class="flex flex-wrap items-center gap-3">
         <div class="mr-auto">
           <h1 class="text-xl font-semibold tracking-tight">Копии одного кадра</h1>

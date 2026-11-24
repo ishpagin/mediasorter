@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // Explorer-like grid of files: only the visible rows are in the DOM (lists of tens of thousands),
 // click / Ctrl / Shift selection, rubber band (by geometry, so it reaches rows outside the DOM), keyboard.
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { useResizeObserver } from '@vueuse/core'
-import { Bookmark, BookmarkPlus, Check, Copy, Trash2, User, UserPen, Users, Video, X } from '@lucide/vue'
+// Touch: tap opens, hold selects, hold and drag selects a range, pinch changes the tile size.
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useMediaQuery, useResizeObserver, useStorage } from '@vueuse/core'
+import { Bookmark, BookmarkPlus, Check, CheckCheck, Copy, Trash2, User, UserPen, Users, Video, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import Viewer from './Viewer.vue'
 import CollectDialog from './CollectDialog.vue'
@@ -25,7 +27,10 @@ const gone = shallowRef(new Set<number>())
 watch(() => props.items, () => { gone.value = new Set() })
 const list = computed(() => (gone.value.size ? props.items.filter((it) => !gone.value.has(it.id)) : props.items))
 
-const GAP = 12, MIN_TILE = 168, HEAD = 44, OVERSCAN = 600
+const MIN_TILE = 168, HEAD = 44, OVERSCAN = 600
+const coarse = useMediaQuery('(pointer: coarse)') // a finger: tap rules, small gaps, pinch zoom
+const ZOOM = [80, 110, 168, 360] // min tile per pinch step: 4, 3, 2, 1 columns on a phone
+const zoom = useStorage('ms-grid-zoom', 1)
 
 const scroller = ref<HTMLElement>()
 const space = ref<HTMLElement>()
@@ -43,12 +48,14 @@ type Entry = Row | Head
 
 // rows and group headers with their y; every item knows its row and column (for the rubber band)
 const hasNote = computed(() => list.value.some((it) => it.note))
-const CAP = computed(() => (hasNote.value ? 60 : 44)) // caption lines under a tile
 
 const layout = computed(() => {
-  const cols = Math.max(1, Math.floor((width.value + GAP) / (MIN_TILE + GAP)))
-  const tile = width.value ? (width.value - GAP * (cols - 1)) / cols : MIN_TILE
-  const rowH = tile + CAP.value
+  const min = coarse.value ? ZOOM[zoom.value] ?? MIN_TILE : MIN_TILE
+  const GAP = coarse.value ? 4 : 12
+  const cols = Math.max(1, Math.floor((width.value + GAP) / (min + GAP)))
+  const tile = width.value ? (width.value - GAP * (cols - 1)) / cols : min
+  const cap = tile < 100 ? 0 : hasNote.value ? 60 : 44 // caption lines under a tile, none on tiny tiles
+  const rowH = tile + cap
   const entries: Entry[] = []
   let y = 0, row: number[] = [], group: number | undefined
   const flush = () => {
@@ -68,7 +75,7 @@ const layout = computed(() => {
     if (row.length === cols) flush()
   })
   flush()
-  return { cols, tile, rowH, entries, height: y }
+  return { cols, tile, rowH, entries, height: y, gap: GAP, cap }
 })
 
 const byId = computed(() => new Map(list.value.map((it) => [it.id, it])))
@@ -102,6 +109,15 @@ watch(list, (items) => { // drop what is gone (deleted, filtered out)
 
 function click(e: MouseEvent, id: number) {
   if (justDragged) return
+  if (fromTouch()) { // tap: open, or pick / unpick once picking started with a hold
+    if (Date.now() - heldAt < 600) return
+    if (!picking.value) return open(id)
+    const s = new Set(sel.value)
+    if (s.has(id)) s.delete(id)
+    else s.add(id)
+    anchor.value = id
+    return setSel(s)
+  }
   const s = new Set(sel.value)
   const a = e.shiftKey && anchor.value !== null ? order.value.indexOf(anchor.value) : -1
   if (a >= 0) { // shift: add the range from the last picked tile, keep what is selected already
@@ -124,13 +140,13 @@ const band = ref<{ l: number; t: number; w: number; h: number } | null>(null)
 let justDragged = false
 
 function idsInRect(l: number, t: number, r: number, b: number): { ids: number[]; first: number; last: number } {
-  const { entries, tile, cols } = layout.value
+  const { entries, tile, cols, gap } = layout.value
   const ids: number[] = []
   let first = -1, last = -1
   for (const e of entries) {
     if (e.kind !== 'row' || e.y + e.h <= t || e.y >= b) continue
     for (let c = 0; c < Math.min(cols, e.ids.length); c++) {
-      const x0 = c * (tile + GAP)
+      const x0 = c * (tile + gap)
       if (x0 + tile > l && x0 < r) {
         const id = e.ids[c]
         ids.push(id)
@@ -144,7 +160,7 @@ function idsInRect(l: number, t: number, r: number, b: number): { ids: number[];
 }
 
 function onDown(e: MouseEvent) {
-  if (e.button !== 0 || (e.target as HTMLElement).closest('.tile, button')) return
+  if (fromTouch() || e.button !== 0 || (e.target as HTMLElement).closest('.tile, button')) return
   const el = scroller.value!, sp = space.value!
   const box = el.getBoundingClientRect()
   const at = () => sp.getBoundingClientRect() // the tiles' coordinate space: moves with scrolling
@@ -184,14 +200,119 @@ function onDown(e: MouseEvent) {
   raf = requestAnimationFrame(tick)
 }
 
+// ---------------------------------------------------------------- touch
+
+let lastTouch = 0
+const fromTouch = () => Date.now() - lastTouch < 800 // the mouse events a browser makes up after a tap
+const picking = ref(false) // a hold started picking: taps add and remove until nothing is picked
+watch(sel, (s) => { if (!s.size) picking.value = false })
+let hold = 0, heldAt = 0, tx = 0, ty = 0, fx = 0, fy = 0, pinch = 0, scrollRaf = 0
+let held: { from: number; base: Set<number>; add: boolean } | null = null
+
+function idAt(cx: number, cy: number): number | null { // the tile under a finger, by geometry
+  const r = space.value!.getBoundingClientRect()
+  const x = cx - r.left, y = cy - r.top
+  const { tile, gap } = layout.value
+  const row = visible.value.find((e) => e.kind === 'row' && y >= e.y && y < e.y + e.h + gap)
+  if (!row || row.kind !== 'row') return null
+  return row.ids[Math.min(row.ids.length - 1, Math.max(0, Math.floor(x / (tile + gap))))]
+}
+function paint() { // hold and drag: everything between the first tile and the finger gets the first tile's new state
+  const id = held && idAt(fx, fy)
+  if (!held || id == null) return
+  const b = order.value.indexOf(id)
+  const s = new Set(held.base)
+  for (let i = Math.min(held.from, b); i <= Math.max(held.from, b); i++) {
+    if (held.add) s.add(order.value[i])
+    else s.delete(order.value[i])
+  }
+  anchor.value = id
+  setSel(s)
+}
+function edgeScroll() { // dragging near the top / bottom edge scrolls the grid
+  const el = scroller.value!, box = el.getBoundingClientRect(), edge = 64
+  const dy = fy < box.top + edge ? fy - box.top - edge : fy > box.bottom - edge ? fy - box.bottom + edge : 0
+  if (dy) { el.scrollTop += dy * 0.3; paint() }
+  scrollRaf = requestAnimationFrame(edgeScroll)
+}
+const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+
+function onTouchStart(e: TouchEvent) {
+  lastTouch = Date.now()
+  clearTimeout(hold)
+  if (e.touches.length === 2) { pinch = dist(e.touches); return }
+  if (e.touches.length > 1) return
+  const t = e.touches[0]
+  tx = fx = t.clientX
+  ty = fy = t.clientY
+  const tile = (e.target as HTMLElement).closest<HTMLElement>('.tile')
+  if (!tile) return
+  const id = Number(tile.dataset.id)
+  hold = window.setTimeout(() => {
+    picking.value = true
+    held = { from: order.value.indexOf(id), base: new Set(sel.value), add: !sel.value.has(id) }
+    heldAt = Date.now()
+    navigator.vibrate?.(10)
+    paint()
+    scrollRaf = requestAnimationFrame(edgeScroll)
+  }, 450)
+}
+function onTouchMove(e: TouchEvent) { // not passive: a drag after a hold selects instead of scrolling
+  lastTouch = Date.now()
+  if (pinch && e.touches.length === 2) {
+    const d = dist(e.touches), k = d / pinch
+    const next = k > 1.25 ? zoom.value + 1 : k < 0.8 ? zoom.value - 1 : zoom.value
+    if (next !== zoom.value && next >= 0 && next < ZOOM.length) {
+      const el = scroller.value!, at = el.scrollTop / Math.max(1, layout.value.height) // keep the same place in view
+      zoom.value = next
+      pinch = d
+      void nextTick(() => { el.scrollTop = at * layout.value.height })
+    }
+    return
+  }
+  fx = e.touches[0].clientX
+  fy = e.touches[0].clientY
+  if (held) { e.preventDefault(); paint() }
+  else if (hold && Math.hypot(fx - tx, fy - ty) > 10) { clearTimeout(hold); hold = 0 } // a scroll, not a hold
+}
+function onTouchEnd(e: TouchEvent) {
+  lastTouch = Date.now()
+  if (e.touches.length < 2) pinch = 0
+  if (e.touches.length) return
+  clearTimeout(hold)
+  hold = 0
+  if (held) { held = null; heldAt = Date.now(); cancelAnimationFrame(scrollRaf) }
+}
+
 // ---------------------------------------------------------------- viewer + keyboard
 
 const query = useQuery()
 const viewing = ref<number | null>(Number(query.q('view')) || null) // ?view=<id>: a link opens the file right away
-watch(viewing, (v) => query.set('view', v))
+// opening adds a history entry, so the phone's back gesture closes the viewer; listing inside it replaces
+const router = useRouter()
+let pushed = false
+watch(() => query.q('view'), (v) => {
+  const n = Number(v) || null
+  if (n === null && viewing.value !== null) { pushed = false; viewing.value = null }
+})
+function onView(v: number | null) {
+  if (v === null) {
+    if (pushed) { pushed = false; router.back() }
+    else query.set('view', null)
+    return
+  }
+  query.set('view', v)
+  if (!coarse.value) { setSel(new Set([v])); anchor.value = v }
+  reveal(v)
+}
 
 function open(id: number) {
+  if (viewing.value === null) {
+    pushed = true
+    void router.push({ query: { ...query.route.query, view: String(id) } })
+  }
   viewing.value = id
+  if (coarse.value) return // on a phone the viewed file is not "selected"
   setSel(new Set([id]))
   anchor.value = id
 }
@@ -200,8 +321,9 @@ function reveal(id: number) { // scroll the grid so the file is visible (after t
   const el = scroller.value
   const e = layout.value.entries.find((x) => x.kind === 'row' && x.ids.includes(id))
   if (!el || !e) return
-  if (e.y < el.scrollTop) el.scrollTop = e.y - GAP
-  else if (e.y + e.h > el.scrollTop + el.clientHeight) el.scrollTop = e.y + e.h - el.clientHeight + GAP
+  const gap = layout.value.gap
+  if (e.y < el.scrollTop) el.scrollTop = e.y - gap
+  else if (e.y + e.h > el.scrollTop + el.clientHeight) el.scrollTop = e.y + e.h - el.clientHeight + gap
 }
 
 function onKey(e: KeyboardEvent) {
@@ -220,8 +342,15 @@ function onKey(e: KeyboardEvent) {
     void remove([...sel.value])
   }
 }
-onMounted(() => window.addEventListener('keydown', onKey))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+onMounted(() => {
+  window.addEventListener('keydown', onKey)
+  scroller.value!.addEventListener('touchmove', onTouchMove, { passive: false })
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey)
+  clearTimeout(hold)
+  cancelAnimationFrame(scrollRaf)
+})
 
 const date = (it: Item) => (it.taken ?? '').slice(0, 10)
 const line2 = (it: Item) => [date(it), it.place].filter(Boolean).join(' · ')
@@ -262,6 +391,7 @@ defineExpose({ selectedIds, clear: () => setSel(new Set()) })
       <template v-if="sel.size">
         <Button variant="ghost" size="icon-sm" aria-label="Снять выделение" title="Снять выделение (Esc)" @click="setSel(new Set())"><X /></Button>
         <span class="count">Выбрано {{ sel.size.toLocaleString('ru') }}</span>
+        <Button v-if="coarse && sel.size < list.length" variant="ghost" size="sm" @click="setSel(new Set(order))"><CheckCheck />Все</Button>
         <Button variant="destructive" size="sm" :disabled="actions.busy" @click="remove(selectedIds)"><Trash2 />Удалить</Button>
         <template v-if="collect">
           <Button variant="outline" size="sm" :disabled="actions.busy" @click="actions.collect(selectedIds)">
@@ -273,25 +403,29 @@ defineExpose({ selectedIds, clear: () => setSel(new Set()) })
         <Button variant="outline" size="sm" @click="who(selectedIds)"><UserPen />Кто на фото</Button>
         <slot name="actions" :ids="selectedIds" />
       </template>
+      <span v-else-if="coarse" class="hint">
+        {{ list.length.toLocaleString('ru') }} файлов · удерживай — выбрать, веди пальцем — несколько · щипок — размер
+      </span>
       <span v-else class="hint">
         {{ list.length.toLocaleString('ru') }} файлов · клик, Ctrl, Shift или рамка мышью — выбрать ·
         двойной клик — открыть · Ctrl+A — все · Delete — удалить · Ctrl+Z — вернуть
       </span>
     </div>
-    <div ref="scroller" class="scroller" @scroll="scrollTop = ($event.target as HTMLElement).scrollTop" @mousedown="onDown">
+    <div ref="scroller" class="scroller" @scroll="scrollTop = ($event.target as HTMLElement).scrollTop" @mousedown="onDown"
+         @touchstart.passive="onTouchStart" @touchend="onTouchEnd" @touchcancel="onTouchEnd" @contextmenu="fromTouch() && $event.preventDefault()">
       <div ref="space" class="space" :style="{ height: layout.height + 'px' }">
         <template v-for="e in visible" :key="e.kind + e.y">
           <div v-if="e.kind === 'head'" class="head" :style="{ top: e.y + 'px' }">{{ e.text }}</div>
           <template v-else>
-            <div v-for="(id, c) in e.ids" :key="id" class="tile" :class="{ sel: sel.has(id) }"
-                 :style="{ top: e.y + 'px', left: c * (layout.tile + GAP) + 'px', width: layout.tile + 'px' }"
-                 :title="title(byId.get(id)!)" @click="click($event, id)" @dblclick="open(id)">
+            <div v-for="(id, c) in e.ids" :key="id" class="tile" :class="{ sel: sel.has(id) }" :data-id="id"
+                 :style="{ top: e.y + 'px', left: c * (layout.tile + layout.gap) + 'px', width: layout.tile + 'px' }"
+                 :title="title(byId.get(id)!)" @click="click($event, id)" @dblclick="fromTouch() || open(id)">
               <div class="img" :style="{ height: layout.tile + 'px' }">
                 <img :src="byId.get(id)!.face ? faceUrl(byId.get(id)!.face!) : previewUrl(id)" alt="" loading="lazy" decoding="async" draggable="false" />
                 <span v-if="byId.get(id)!.kind === 'video'" class="badge"><Video class="size-3.5" /></span>
                 <span class="check"><Check class="size-3.5" :stroke-width="3" /></span>
               </div>
-              <div class="cap">
+              <div v-if="layout.cap" class="cap">
                 <div v-if="hasNote" class="l0">{{ byId.get(id)!.note }}</div>
                 <div class="l1">
                   <template v-if="byId.get(id)!.who"><User class="ico" />{{ byId.get(id)!.who }}</template>
@@ -308,7 +442,7 @@ defineExpose({ selectedIds, clear: () => setSel(new Set()) })
       </div>
     </div>
     <Viewer v-if="viewing !== null" v-model="viewing" :items="list"
-            @update:model-value="(id) => { if (id !== null) { setSel(new Set([id])); anchor = id; reveal(id) } }"
+            @update:model-value="onView"
             @delete="remove" @undo="actions.undo()">
       <template v-if="collect" #actions="{ id }">
         <Button variant="ghost" size="sm" :disabled="actions.busy" @click="actions.collect([id])">
@@ -336,7 +470,17 @@ defineExpose({ selectedIds, clear: () => setSel(new Set()) })
 .selbar.on { background: color-mix(in srgb, var(--ms-pick) 12%, var(--background)); }
 .count { font-weight: 600; margin-right: 8px; }
 .hint { color: var(--muted-foreground); font-size: 13px; }
-.scroller { flex: 1; overflow-y: auto; padding: 16px 24px 32px; user-select: none; position: relative; }
+.scroller {
+  flex: 1; overflow-y: auto; padding: 16px 24px 32px; user-select: none; position: relative;
+  touch-action: pan-y; /* the pinch is ours: it changes the tile size */
+  -webkit-touch-callout: none; overscroll-behavior: contain;
+}
+@media (max-width: 767px) {
+  .selbar { padding: 6px 12px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .selbar > * { flex-shrink: 0; }
+  .selbar .hint { flex-shrink: 1; font-size: 12px; }
+  .scroller { padding: 4px 4px 24px; }
+}
 .space { position: relative; }
 .head {
   position: absolute; left: 0; right: 0; height: 44px; padding-top: 14px;
@@ -348,7 +492,11 @@ defineExpose({ selectedIds, clear: () => setSel(new Set()) })
   outline: 3px solid transparent; outline-offset: -3px; transition: outline-color 120ms var(--ms-ease);
 }
 .img img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 300ms var(--ms-ease); }
-.tile:hover img { transform: scale(1.03); }
+@media (hover: hover) and (pointer: fine) {
+  .tile:hover img { transform: scale(1.03); }
+}
+.tile:active .img { transform: scale(.97); }
+.img { transition: outline-color 120ms var(--ms-ease), transform 120ms var(--ms-ease); }
 .tile.sel .img { outline-color: var(--ms-pick); }
 .check {
   position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;

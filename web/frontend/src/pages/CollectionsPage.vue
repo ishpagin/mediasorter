@@ -70,7 +70,7 @@ async function finish() {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-col gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-col gap-3 px-3 md:px-6 pb-3 pt-4">
       <div>
         <h1 class="text-xl font-semibold tracking-tight">Подборки</h1>
         <p class="text-[13px] text-muted-foreground">

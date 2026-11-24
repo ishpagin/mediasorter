@@ -35,7 +35,7 @@ const { data, loading, error } = useFileList(api.only, () => (ids.value.length
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-col gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-col gap-3 px-3 md:px-6 pb-3 pt-4">
       <h1 class="text-xl font-semibold tracking-tight">Только выбранные люди</h1>
       <div class="flex flex-wrap items-center gap-2">
         <Button v-for="id in ids" :key="id" size="sm" variant="secondary" @click="remove(id)">{{ nameOf(id) }}<X /></Button>
@@ -53,7 +53,7 @@ const { data, loading, error } = useFileList(api.only, () => (ids.value.length
         </label>
       </div>
     </header>
-    <p v-if="!ids.length" class="px-6 py-10 text-muted-foreground">Выбери одного или нескольких людей.</p>
+    <p v-if="!ids.length" class="px-3 md:px-6 py-10 text-muted-foreground">Выбери одного или нескольких людей.</p>
     <ListView v-else :data="data" :loading="loading" :error="error" />
   </div>
 </template>

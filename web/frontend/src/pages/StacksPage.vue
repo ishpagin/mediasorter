@@ -27,7 +27,7 @@ const busy = computed(() => !!jobs.job?.running)
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-col gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-col gap-3 px-3 md:px-6 pb-3 pt-4">
       <div class="flex flex-wrap items-center gap-3">
         <div class="mr-auto">
           <h1 class="text-xl font-semibold tracking-tight">Стопки похожих</h1>

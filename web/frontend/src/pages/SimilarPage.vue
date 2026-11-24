@@ -46,7 +46,7 @@ async function different(p: SimilarPair) {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-wrap items-center gap-6 px-6 pb-3 pt-4">
+    <header class="flex flex-wrap items-center gap-6 px-3 md:px-6 pb-3 pt-4">
       <div class="mr-auto">
         <h1 class="text-xl font-semibold tracking-tight">Похожие люди</h1>
         <p class="text-[13px] text-muted-foreground">Часто это один человек, разбитый на два. Бывают и родственники — для них «Это разные люди».</p>
@@ -56,7 +56,7 @@ async function different(p: SimilarPair) {
                 :class="tab === t.v ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'"
                 class="rounded-md px-3 py-1" @click="set('tab', t.v, 'faces')">{{ t.l }}</button>
       </nav>
-      <label v-if="tab === 'faces'" class="flex w-72 items-center gap-3 text-sm">Похожесть от {{ slider[0].toFixed(2) }}
+      <label v-if="tab === 'faces'" class="flex w-full items-center sm:w-72 gap-3 text-sm">Похожесть от {{ slider[0].toFixed(2) }}
         <Slider v-model="slider" :min="0.3" :max="0.8" :step="0.01" class="flex-1" @value-commit="(v: number[]) => set('min', v[0].toFixed(2), '0.45')" />
       </label>
       <label v-if="tab === 'faces'" class="flex items-center gap-2 text-sm">Мин. файлов у каждого
@@ -64,22 +64,22 @@ async function different(p: SimilarPair) {
                @update:model-value="(v) => set('files', Math.max(1, Number(v) || 1), '3')" />
       </label>
     </header>
-    <div v-if="tab === 'voices'" class="flex-1 overflow-y-auto px-6 pb-8"><VoiceGroups /></div>
-    <div v-else class="flex-1 overflow-y-auto px-6 pb-8">
+    <div v-if="tab === 'voices'" class="flex-1 overflow-y-auto px-3 md:px-6 pb-8"><VoiceGroups /></div>
+    <div v-else class="flex-1 overflow-y-auto px-3 md:px-6 pb-8">
       <p class="pb-3 text-sm text-muted-foreground">{{ loading ? 'Сравниваю людей…' : `Найдено пар: ${pairs.length}` }}</p>
       <div class="flex flex-col gap-3">
         <div v-for="p in pairs.slice(0, shown)" :key="p.a.id + ':' + p.b.id"
-             class="grid grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-xl border bg-card p-3">
+             class="grid grid-cols-2 items-center gap-3 rounded-xl border bg-card p-3 md:grid-cols-[1fr_auto_1fr] md:gap-4">
           <div v-for="(side, k) in [{ person: p.a, faces: p.facesA }, { person: p.b, faces: p.facesB }]" :key="k"
-               :class="k === 1 ? 'order-3' : ''" class="flex flex-col gap-2">
+               :class="k === 1 ? 'md:order-3' : ''" class="flex min-w-0 flex-col gap-2">
             <RouterLink :to="{ path: '/person', query: { id: side.person.id } }" class="font-medium hover:underline">
               {{ personLabel(side.person) }} <span class="font-normal text-muted-foreground">· {{ side.person.n }} файлов</span>
             </RouterLink>
-            <div class="flex gap-1.5">
-              <img v-for="f in side.faces" :key="f" :src="faceUrl(f)" alt="" loading="lazy" class="size-20 rounded-lg object-cover" />
+            <div class="flex flex-wrap gap-1.5">
+              <img v-for="f in side.faces" :key="f" :src="faceUrl(f)" alt="" loading="lazy" class="size-14 rounded-lg object-cover md:size-20" />
             </div>
           </div>
-          <div class="order-2 flex flex-col items-center gap-2">
+          <div class="order-3 col-span-2 flex flex-wrap items-center justify-center gap-2 md:order-2 md:col-span-1 md:flex-col">
             <span class="text-2xl font-semibold tabular-nums">{{ p.sim.toFixed(2) }}</span>
             <Button size="sm" :disabled="actions.busy" @click="merge(p)"><Merge />Объединить</Button>
             <Button size="sm" variant="ghost" :disabled="actions.busy" @click="different(p)"><UserX />Это разные люди</Button>

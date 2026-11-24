@@ -74,7 +74,7 @@ function onlyThem() {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-wrap items-center gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-wrap items-center gap-3 px-3 md:px-6 pb-3 pt-4">
       <h1 class="mr-auto text-xl font-semibold tracking-tight">Люди</h1>
       <div class="relative">
         <Search class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -86,7 +86,7 @@ function onlyThem() {
       </label>
       <label class="flex items-center gap-2 text-sm"><Switch v-model="hidden" />Скрытые</label>
     </header>
-    <div class="flex min-h-12 flex-wrap items-center gap-2 border-b px-6 py-1.5 text-sm"
+    <div class="flex min-h-12 flex-wrap items-center gap-2 border-b px-3 md:px-6 py-1.5 text-sm"
          :class="{ 'bg-[color-mix(in_srgb,var(--ms-pick)_12%,var(--background))]': selected.length }">
       <template v-if="selected.length">
         <span class="mr-2 font-semibold">Отмечено {{ selected.length }}</span>
@@ -99,7 +99,7 @@ function onlyThem() {
         {{ people.length.toLocaleString('ru') }} людей · подпиши имя прямо на карточке · отметь несколько, чтобы объединить или скрыть
       </span>
     </div>
-    <div class="flex-1 overflow-y-auto px-6 py-4">
+    <div class="flex-1 overflow-y-auto px-3 md:px-6 py-4">
       <p v-if="!loading && !people.length" class="py-16 text-center text-muted-foreground">Никого не нашлось.</p>
       <div class="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3">
         <div v-for="p in people.slice(0, shown)" :key="p.id"

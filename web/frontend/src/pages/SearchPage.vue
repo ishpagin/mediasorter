@@ -23,7 +23,7 @@ const { data, loading, error } = useFileList(api.search, () =>
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-wrap items-center gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-wrap items-center gap-3 px-3 md:px-6 pb-3 pt-4">
       <h1 class="mr-3 text-xl font-semibold tracking-tight">Поиск</h1>
       <div class="relative min-w-72 flex-1">
         <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -34,7 +34,7 @@ const { data, loading, error } = useFileList(api.search, () =>
       </label>
     </header>
     <SpeechOffer />
-    <div v-if="!q('q')" class="flex flex-col gap-3 px-6 py-8 text-muted-foreground">
+    <div v-if="!q('q')" class="flex flex-col gap-3 px-3 md:px-6 py-8 text-muted-foreground">
       <p>Опиши словами, что на фото (на русском или английском) или что говорят в видео. Например:</p>
       <div class="flex flex-wrap gap-2">
         <button v-for="e in examples" :key="e" class="rounded-full border px-3 py-1 text-sm hover:bg-accent hover:text-foreground" @click="text = e">{{ e }}</button>

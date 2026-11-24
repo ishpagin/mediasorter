@@ -52,7 +52,7 @@ async function empty() {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-wrap items-end gap-3 px-6 pb-3 pt-4">
+    <header class="flex flex-wrap items-end gap-3 px-3 md:px-6 pb-3 pt-4">
       <div class="mr-auto">
         <h1 class="text-xl font-semibold tracking-tight">Корзина</h1>
         <p class="text-[13px] text-muted-foreground">
@@ -69,9 +69,9 @@ async function empty() {
       </Button>
     </header>
 
-    <p v-if="error" class="px-6 text-destructive">{{ error }}</p>
-    <p v-else-if="data && !data.items.length" class="px-6 py-6 text-muted-foreground">Корзина пуста.</p>
-    <div v-else class="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+    <p v-if="error" class="px-3 md:px-6 text-destructive">{{ error }}</p>
+    <p v-else-if="data && !data.items.length" class="px-3 md:px-6 py-6 text-muted-foreground">Корзина пуста.</p>
+    <div v-else class="min-h-0 flex-1 overflow-y-auto px-3 md:px-6 pb-6">
       <div class="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3">
         <button v-for="it in items" :key="it.id" type="button" :aria-pressed="picked.has(it.id)" :title="it.path"
                 class="flex flex-col overflow-hidden rounded-xl border bg-card text-left outline-offset-2"

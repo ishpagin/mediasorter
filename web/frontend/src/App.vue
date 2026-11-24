@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import {
-  Bookmark, Copy, FolderSync, House, Image, Images, Layers, Link, Moon, Plug, Plus, RefreshCw, Search, Sun, Trash2, Undo2, UserMinus,
+  Bookmark, Copy, FolderSync, House, Image, Images, Layers, Link, Menu, Moon, Plug, Plus, RefreshCw, Search, Sun, Trash2, Undo2, UserMinus,
   UserPlus, Users, Video,
 } from '@lucide/vue'
 import { useRoute } from 'vue-router'
+import { useMediaQuery } from '@vueuse/core'
 import { desktop } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,6 +41,20 @@ async function createCollection() {
   newOpen.value = false
 }
 const dark = ref(document.documentElement.classList.contains('dark'))
+watchEffect(() => { // the phone's status bar takes the header color
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark.value ? '#171717' : '#fafafa')
+})
+
+// phone: the sidebar is a drawer behind the menu button, closed by a tap outside, a swipe left or going to a page
+const narrow = useMediaQuery('(max-width: 767px)')
+const menu = ref(false)
+watch(() => route.path, () => { menu.value = false })
+let sx = 0, sy = 0
+function swipeStart(e: TouchEvent) { sx = e.touches[0].clientX; sy = e.touches[0].clientY }
+function swipeEnd(e: TouchEvent) {
+  const dx = sx - e.changedTouches[0].clientX, dy = Math.abs(e.changedTouches[0].clientY - sy)
+  if (dx > 60 && dx > dy) menu.value = false
+}
 
 const nav = [
   { title: 'Люди', items: [
@@ -93,8 +108,21 @@ onMounted(() => {
 <template>
   <TooltipProvider :delay-duration="400">
     <RouterView v-if="route.meta.bare" />
-    <div v-else class="grid h-full grid-cols-[248px_1fr]">
-      <aside class="flex flex-col gap-4 overflow-y-auto border-r bg-sidebar px-3 py-4 text-sidebar-foreground">
+    <div v-else class="flex h-full flex-col md:grid md:grid-cols-[248px_1fr]">
+      <header class="flex shrink-0 items-center gap-1 border-b bg-sidebar px-1.5 pt-[env(safe-area-inset-top)] text-sidebar-foreground md:hidden">
+        <Button variant="ghost" size="icon" class="size-11" aria-label="Меню" :aria-expanded="menu" @click="menu = true"><Menu class="size-5" /></Button>
+        <RouterLink to="/files" class="flex items-center gap-2 font-semibold">
+          <img src="/mark.svg" alt="" width="24" height="24" />Mediasorter
+        </RouterLink>
+        <Button v-if="actions.undoLabel" variant="ghost" size="icon" class="ml-auto size-11" :disabled="actions.busy"
+                :aria-label="'Отменить ' + actions.undoLabel" @click="actions.undo()"><Undo2 class="size-5" /></Button>
+      </header>
+      <Transition enter-from-class="opacity-0" leave-to-class="opacity-0">
+        <div v-if="menu && narrow" class="fixed inset-0 z-40 bg-black/50 transition-opacity duration-200" @click="menu = false" />
+      </Transition>
+      <aside :class="menu ? 'translate-x-0' : '-translate-x-full'" :inert="narrow && !menu"
+             class="fixed inset-y-0 left-0 z-50 flex w-[min(288px,85vw)] flex-col gap-4 overflow-y-auto overscroll-contain border-r bg-sidebar px-3 py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] text-sidebar-foreground transition-transform duration-200 ease-out md:static md:z-auto md:w-auto md:translate-x-0 md:transition-none"
+             @touchstart.passive="swipeStart" @touchend="swipeEnd">
         <div class="flex items-center justify-between gap-1">
           <RouterLink to="/files" class="flex items-center gap-2.5 px-2 py-1 text-[17px] font-semibold">
             <img src="/mark.svg" alt="" width="28" height="28" />
@@ -109,14 +137,14 @@ onMounted(() => {
           <section v-for="g in nav" :key="g.title">
             <h3 class="mb-1 px-2.5 text-xs font-medium text-muted-foreground">{{ g.title }}</h3>
             <RouterLink v-for="it in g.items" :key="it.to" :to="it.to"
-                        class="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-sidebar-accent"
+                        class="flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-sm transition-colors hover:bg-sidebar-accent active:bg-sidebar-accent md:py-1.5"
                         active-class="!bg-sidebar-primary !text-sidebar-primary-foreground">
               <component :is="it.icon" class="size-4 opacity-80" />{{ it.label }}
             </RouterLink>
           </section>
         </nav>
         <div class="mt-auto flex flex-col gap-3 px-1.5 text-[13px]">
-          <Button v-if="actions.undoLabel" variant="secondary" size="sm" class="justify-start" :disabled="actions.busy"
+          <Button v-if="actions.undoLabel" variant="secondary" size="sm" class="justify-start max-md:hidden" :disabled="actions.busy"
                   :title="'Отменить ' + actions.undoLabel" @click="actions.undo()">
             <Undo2 /><span class="truncate">Отменить {{ actions.undoLabel }}</span><kbd class="ml-auto text-[11px] opacity-60">Ctrl+Z</kbd>
           </Button>
@@ -178,7 +206,7 @@ onMounted(() => {
           </div>
         </div>
       </aside>
-      <main class="flex h-full min-w-0 flex-col overflow-hidden">
+      <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] md:h-full">
         <RouterView />
       </main>
     </div>
