@@ -2,7 +2,7 @@
 // Full-screen viewer: the original (the stored preview shows at once), ↑ ↓ (and ← → on photos) / Tab between groups, a strip of
 // the current group (stack / copies) at the bottom, what is said in a video on the right, F = full screen, Esc = close.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Captions, ChevronLeft, ChevronRight, Maximize, Trash2, TriangleAlert, X } from '@lucide/vue'
+import { Captions, ChevronLeft, ChevronRight, ExternalLink, Maximize, Trash2, TriangleAlert, X } from '@lucide/vue'
 import { useRoute } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import SpeechPanel from './SpeechPanel.vue'
@@ -251,7 +251,7 @@ const info = computed(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="item" ref="root" tabindex="-1" class="viewer" :class="{ 'has-strip': group.length > 1, bare }"
+    <div v-if="item" ref="root" tabindex="-1" class="viewer" @dragstart.prevent @dragover.prevent @drop.prevent" :class="{ 'has-strip': group.length > 1, bare }"
          :style="drag.y ? { backgroundColor: `rgba(0, 0, 0, ${1 - Math.min(0.7, drag.y / 400)})` } : undefined">
       <header class="top">
         <span class="pos">{{ index + 1 }} / {{ items.length.toLocaleString('ru') }}</span>
@@ -264,6 +264,9 @@ const info = computed(() => {
           <Button v-if="said.length" variant="ghost" size="sm" :aria-pressed="showText" title="Что говорят в видео"
                   @click="showText = !showText"><Captions />Текст</Button>
           <Button variant="ghost" size="sm" class="first text-red-400 hover:text-red-300" @click="remove"><Trash2 />Удалить</Button>
+          <Button as-child variant="ghost" size="sm" class="first">
+            <a :href="originalUrl(item.id)" target="_blank" rel="noopener" title="Открыть оригинал в новой вкладке"><ExternalLink />Оригинал</a>
+          </Button>
           <Button variant="ghost" size="icon-sm" class="first" aria-label="Во весь экран" title="Во весь экран (F)" @click="toggleFull"><Maximize /></Button>
         </div>
         <Button variant="ghost" size="icon-sm" class="close" aria-label="Закрыть" title="Закрыть (Esc)" @click="close"><X /></Button>
@@ -273,7 +276,7 @@ const info = computed(() => {
                :style="mediaStyle" @timeupdate="onTime"
                @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up" />
         <img v-else :key="item.id" :src="full ?? previewUrl(item.id)" alt="" class="media" draggable="false"
-             :style="mediaStyle" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up" />
+             @contextmenu="Date.now() - touched < 800 && $event.preventDefault()" :style="mediaStyle" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up" />
         <button class="nav prev" :disabled="index <= 0" aria-label="Предыдущее" @click="step(-1)"><ChevronLeft class="mx-auto size-6" /></button>
         <button class="nav next" :disabled="index >= items.length - 1" aria-label="Следующее" @click="step(1)"><ChevronRight class="mx-auto size-6" /></button>
         <SpeechPanel v-if="hasText" :said="said" :voices="voices" :now="now" :query="query" @play="playFrom" @changed="loadSpeech(item!.id)" />
@@ -324,7 +327,7 @@ const info = computed(() => {
 .warn { color: #fbbf24; white-space: nowrap; }
 .keys { margin-left: auto; color: #71717a; white-space: nowrap; font-size: 12px; }
 .stage { position: relative; min-height: 0; display: grid; grid-template: 100% / 100%; place-items: center; overflow: hidden; }
-.media { width: 100%; height: 100%; object-fit: contain; /* upscales small previews too */ animation: m-in 220ms var(--ms-ease) both; }
+.media { width: 100%; height: 100%; object-fit: contain; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; /* upscales small previews too */ animation: m-in 220ms var(--ms-ease) both; }
 @keyframes m-in { from { opacity: .4; transform: scale(.985); } }
 .nav {
   position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 96px; border: none; border-radius: 12px;
