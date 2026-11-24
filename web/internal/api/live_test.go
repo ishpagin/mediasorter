@@ -23,7 +23,7 @@ func TestLivePhotos(t *testing.T) {
 	}
 	if _, err := d.Exec(`INSERT INTO files (id, path, kind, n_faces, duration) VALUES
 		(1, '/a.jpg', 'image', 0, NULL), (2, '/live.mov', 'video', 0, 2.1), (3, '/long.mp4', 'video', 0, 30),
-		(4, '/nodur.mp4', 'video', 0, NULL)`); err != nil {
+		(4, '/nodur.mp4', 'video', 0, NULL), (5, '/IMG_1.HEIC', 'image', 0, NULL), (6, '/IMG_1.mov', 'video', 0, 2.5)`); err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
@@ -44,8 +44,9 @@ func TestLivePhotos(t *testing.T) {
 		}
 		return l
 	}
-	if got := ids("files"); !reflect.DeepEqual(got, []int64{1, 2}) {
-		t.Errorf("photos = %v, want [1 2]", got)
+	// 6 is the video half of the live photo 5: one shot, one tile
+	if got := ids("files"); !reflect.DeepEqual(got, []int64{5, 1, 2}) {
+		t.Errorf("photos = %v, want [5 1 2]", got)
 	}
 	if got := ids("videos"); !reflect.DeepEqual(got, []int64{3, 4}) {
 		t.Errorf("videos = %v, want [3 4]", got)

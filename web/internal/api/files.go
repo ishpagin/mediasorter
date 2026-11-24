@@ -150,10 +150,20 @@ func (s *Server) filterList(r *http.Request, items []Item, alwaysVideo bool) (ou
 	}
 	keepVideo := alwaysVideo || r.URL.Query().Get("video") == "1"
 	keepMoved := r.URL.Query().Get("moved") == "1"
+	stem := func(p string) string { return strings.ToLower(strings.TrimSuffix(p, filepath.Ext(p))) }
+	stills := map[string]bool{} // a live photo's video next to its still (IMG_1.HEIC + IMG_1.MOV) is the same shot
+	for _, it := range items {
+		if it.Kind == "image" {
+			stills[stem(it.Path)] = true
+		}
+	}
 	out = []Item{}
 	for _, it := range items {
 		if !keepVideo && it.Kind == "video" && !live[it.ID] {
 			hiddenVideo++
+			continue
+		}
+		if live[it.ID] && stills[stem(it.Path)] {
 			continue
 		}
 		if !keepMoved && moved[it.ID] {
